@@ -1,0 +1,27 @@
+# Example workflow for a project that uses Worker Safety.
+# Copy this into your own repository as .github/workflows/worker-safety.yml.
+name: Worker Safety
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  worker-safety:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.3'
+          coverage: none
+
+      - run: composer install --no-interaction --no-progress
+
+      - run: vendor/bin/worker-safety scan --fail-on=high --no-ansi

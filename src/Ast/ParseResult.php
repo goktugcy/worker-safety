@@ -15,7 +15,7 @@ use PhpParser\Node\Stmt;
 final class ParseResult
 {
     /**
-     * @param list<Stmt>        $statements
+     * @param list<Stmt> $statements
      * @param list<ParseFailure> $failures
      */
     public function __construct(

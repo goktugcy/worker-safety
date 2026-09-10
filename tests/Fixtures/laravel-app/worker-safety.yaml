@@ -1,0 +1,13 @@
+paths:
+  - app
+  - routes
+
+exclude:
+  - vendor
+  - storage
+
+runtime:
+  - frankenphp
+  - octane
+
+fail_on: high

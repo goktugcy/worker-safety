@@ -1,0 +1,9 @@
+{
+    "name": "example/leaky-app",
+    "description": "A tiny app used to demonstrate what Worker Safety finds, and what a fixed version looks like.",
+    "type": "project",
+    "require": {
+        "php": "^8.2",
+        "laravel/framework": "^12.0"
+    }
+}

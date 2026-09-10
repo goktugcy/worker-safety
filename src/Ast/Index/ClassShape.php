@@ -12,11 +12,11 @@ use WorkerSafety\Finding\Location;
 final class ClassShape
 {
     /**
-     * @param list<string>                $interfaces
-     * @param array<string, PropertyShape> $staticProperties  keyed by property name
+     * @param list<string> $interfaces
+     * @param array<string, PropertyShape> $staticProperties keyed by property name
      * @param array<string, PropertyShape> $instanceProperties keyed by property name
-     * @param array<string, MethodShape>   $methods            keyed by lowercase method name
-     * @param list<string>                $traits
+     * @param array<string, MethodShape> $methods keyed by lowercase method name
+     * @param list<string> $traits
      */
     public function __construct(
         public readonly string $name,

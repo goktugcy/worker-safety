@@ -1,0 +1,14 @@
+parameters:
+    level: max
+    paths:
+        - src
+        - tests
+    excludePaths:
+        analyse:
+            # Fixtures are analysis input, not code: one of them is deliberately
+            # unparseable and the rest deliberately contain the patterns the
+            # rules look for.
+            - tests/Fixtures
+    treatPhpDocTypesAsCertain: false
+    checkMissingCallableSignature: true
+    reportUnmatchedIgnoredErrors: true

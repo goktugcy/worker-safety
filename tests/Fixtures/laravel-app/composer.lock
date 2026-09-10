@@ -1,0 +1,13 @@
+{
+    "_readme": ["Trimmed lock file: only what FrameworkDetector reads."],
+    "content-hash": "0000000000000000000000000000000000000000",
+    "packages": [
+        {
+            "name": "laravel/framework",
+            "version": "v12.4.1"
+        }
+    ],
+    "packages-dev": [],
+    "platform": {},
+    "platform-dev": {}
+}

@@ -4,11 +4,6 @@ declare(strict_types=1);
 
 namespace WorkerSafety\Support;
 
-use FilesystemIterator;
-use RecursiveCallbackFilterIterator;
-use RecursiveDirectoryIterator;
-use RecursiveIteratorIterator;
-use SplFileInfo;
 use WorkerSafety\Exception\AnalysisException;
 
 /**
@@ -71,14 +66,14 @@ final class FileFinder
      */
     private function walk(string $directory): array
     {
-        $directoryIterator = new RecursiveDirectoryIterator(
+        $directoryIterator = new \RecursiveDirectoryIterator(
             $directory,
-            FilesystemIterator::SKIP_DOTS | FilesystemIterator::CURRENT_AS_FILEINFO | FilesystemIterator::UNIX_PATHS,
+            \FilesystemIterator::SKIP_DOTS | \FilesystemIterator::CURRENT_AS_FILEINFO | \FilesystemIterator::UNIX_PATHS,
         );
 
-        $filter = new RecursiveCallbackFilterIterator(
+        $filter = new \RecursiveCallbackFilterIterator(
             $directoryIterator,
-            function (SplFileInfo $current): bool {
+            function (\SplFileInfo $current): bool {
                 // Never traverse into symlinked directories: they invite cycles
                 // and usually point back into excluded trees.
                 if ($current->isLink()) {
@@ -97,8 +92,8 @@ final class FileFinder
 
         $files = [];
 
-        /** @var SplFileInfo $file */
-        foreach (new RecursiveIteratorIterator($filter, RecursiveIteratorIterator::LEAVES_ONLY) as $file) {
+        /** @var \SplFileInfo $file */
+        foreach (new \RecursiveIteratorIterator($filter, \RecursiveIteratorIterator::LEAVES_ONLY) as $file) {
             if ($file->isFile()) {
                 $files[] = Paths::normalize($file->getPathname());
             }

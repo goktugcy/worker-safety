@@ -1,1 +1,16 @@
-vendor
+/vendor/
+/composer.phar
+/.phpunit.cache/
+/.phpunit.result.cache
+/.php-cs-fixer.cache
+/phpstan.neon.local
+/phpunit.xml.local
+/coverage/
+/build/
+/worker-safety.sarif
+/worker-safety-baseline.json
+/worker-safety.yaml
+.DS_Store
+.idea/
+.vscode/
+*.log

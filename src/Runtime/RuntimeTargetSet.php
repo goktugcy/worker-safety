@@ -4,17 +4,12 @@ declare(strict_types=1);
 
 namespace WorkerSafety\Runtime;
 
-use ArrayIterator;
-use Countable;
-use IteratorAggregate;
-use Traversable;
-
 /**
  * Immutable, de-duplicated, canonically ordered set of runtime targets.
  *
- * @implements IteratorAggregate<int, RuntimeTarget>
+ * @implements \IteratorAggregate<int, RuntimeTarget>
  */
-final class RuntimeTargetSet implements Countable, IteratorAggregate
+final class RuntimeTargetSet implements \Countable, \IteratorAggregate
 {
     /**
      * @var list<RuntimeTarget>
@@ -136,8 +131,8 @@ final class RuntimeTargetSet implements Countable, IteratorAggregate
         return count($this->targets);
     }
 
-    public function getIterator(): Traversable
+    public function getIterator(): \Traversable
     {
-        return new ArrayIterator($this->targets);
+        return new \ArrayIterator($this->targets);
     }
 }

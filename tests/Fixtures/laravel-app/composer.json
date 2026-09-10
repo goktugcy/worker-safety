@@ -1,0 +1,9 @@
+{
+    "name": "acme/laravel-app",
+    "description": "Laravel-like fixture project used by the integration tests.",
+    "type": "project",
+    "require": {
+        "php": "^8.2",
+        "laravel/framework": "^12.0"
+    }
+}

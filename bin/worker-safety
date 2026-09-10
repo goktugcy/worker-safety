@@ -1,0 +1,47 @@
+#!/usr/bin/env php
+<?php
+
+declare(strict_types=1);
+
+/*
+ * Worker Safety CLI entry point.
+ *
+ * Works both from a standalone checkout of this repository and when installed
+ * as a Composer dependency, where Composer creates a proxy in vendor/bin
+ * (including a .bat proxy on Windows).
+ */
+
+if (PHP_VERSION_ID < 80200) {
+    fwrite(STDERR, sprintf(
+        'Worker Safety requires PHP 8.2 or newer, found %s.' . PHP_EOL,
+        PHP_VERSION,
+    ));
+
+    exit(3);
+}
+
+$autoloaders = [
+    // Installed as a dependency: vendor/workersafety/worker-safety/bin/..
+    __DIR__ . '/../../../autoload.php',
+    // Standalone checkout.
+    __DIR__ . '/../vendor/autoload.php',
+];
+
+$loaded = false;
+
+foreach ($autoloaders as $autoloader) {
+    if (is_file($autoloader)) {
+        require $autoloader;
+        $loaded = true;
+
+        break;
+    }
+}
+
+if (!$loaded) {
+    fwrite(STDERR, 'Could not locate the Composer autoloader. Run `composer install` first.' . PHP_EOL);
+
+    exit(3);
+}
+
+exit((new WorkerSafety\Application\WorkerSafetyApplication())->run());

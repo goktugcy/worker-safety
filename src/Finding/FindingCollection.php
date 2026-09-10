@@ -4,17 +4,12 @@ declare(strict_types=1);
 
 namespace WorkerSafety\Finding;
 
-use ArrayIterator;
-use Countable;
-use IteratorAggregate;
-use Traversable;
-
 /**
  * Immutable, de-duplicated list of findings.
  *
- * @implements IteratorAggregate<int, Finding>
+ * @implements \IteratorAggregate<int, Finding>
  */
-final class FindingCollection implements Countable, IteratorAggregate
+final class FindingCollection implements \Countable, \IteratorAggregate
 {
     /**
      * @var list<Finding>
@@ -96,11 +91,13 @@ final class FindingCollection implements Countable, IteratorAggregate
      */
     public function countsBySeverity(): array
     {
-        $counts = [];
-
-        foreach (Severity::ordered() as $severity) {
-            $counts[$severity->value] = 0;
-        }
+        $counts = [
+            Severity::Critical->value => 0,
+            Severity::High->value => 0,
+            Severity::Medium->value => 0,
+            Severity::Low->value => 0,
+            Severity::Info->value => 0,
+        ];
 
         foreach ($this->findings as $finding) {
             ++$counts[$finding->severity->value];
@@ -143,8 +140,8 @@ final class FindingCollection implements Countable, IteratorAggregate
         return count($this->findings);
     }
 
-    public function getIterator(): Traversable
+    public function getIterator(): \Traversable
     {
-        return new ArrayIterator($this->findings);
+        return new \ArrayIterator($this->findings);
     }
 }

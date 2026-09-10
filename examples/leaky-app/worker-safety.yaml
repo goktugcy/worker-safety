@@ -1,0 +1,9 @@
+paths:
+  - before
+  - after
+
+runtime:
+  - frankenphp
+  - octane
+
+fail_on: high

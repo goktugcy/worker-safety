@@ -13,7 +13,6 @@ use WorkerSafety\Ast\AstHelper;
 use WorkerSafety\Ast\Index\BindingContext;
 use WorkerSafety\Ast\Index\ClassKind;
 use WorkerSafety\Ast\Index\ContainerBindingCollector;
-use WorkerSafety\Ast\Index\DefaultValueKind;
 use WorkerSafety\Ast\Index\MethodShape;
 use WorkerSafety\Ast\Index\ProjectIndex;
 use WorkerSafety\Ast\Index\PropertyShape;
@@ -87,10 +86,10 @@ final class IndexCollectingVisitor extends NodeVisitorAbstract
         }
 
         if ($node instanceof Stmt\TraitUse) {
-            $this->currentClass()?->addTraits(array_map(
+            $this->currentClass()?->addTraits(array_values(array_map(
                 static fn (Node\Name $name): string => AstHelper::nameToString($name),
                 $node->traits,
-            ));
+            )));
 
             return null;
         }
@@ -185,20 +184,11 @@ final class IndexCollectingVisitor extends NodeVisitorAbstract
 
         if ($node instanceof Stmt\Class_) {
             $parent = $node->extends instanceof Node\Name ? AstHelper::nameToString($node->extends) : null;
-            $interfaces = array_map(
-                static fn (Node\Name $n): string => AstHelper::nameToString($n),
-                $node->implements,
-            );
+            $interfaces = self::namesToStrings($node->implements);
         } elseif ($node instanceof Stmt\Interface_) {
-            $interfaces = array_map(
-                static fn (Node\Name $n): string => AstHelper::nameToString($n),
-                $node->extends,
-            );
+            $interfaces = self::namesToStrings($node->extends);
         } elseif ($node instanceof Stmt\Enum_) {
-            $interfaces = array_map(
-                static fn (Node\Name $n): string => AstHelper::nameToString($n),
-                $node->implements,
-            );
+            $interfaces = self::namesToStrings($node->implements);
         }
 
         $this->classStack[] = new ClassShapeBuilder(
@@ -212,6 +202,19 @@ final class IndexCollectingVisitor extends NodeVisitorAbstract
             AstHelper::location($node, $this->file),
             $isAnonymous,
         );
+    }
+
+    /**
+     * @param array<array-key, Node\Name> $names
+     *
+     * @return list<string>
+     */
+    private static function namesToStrings(array $names): array
+    {
+        return array_values(array_map(
+            static fn (Node\Name $name): string => AstHelper::nameToString($name),
+            $names,
+        ));
     }
 
     private function classKind(Stmt\ClassLike $node): ClassKind
@@ -505,7 +508,7 @@ final class IndexCollectingVisitor extends NodeVisitorAbstract
     {
         $location = AstHelper::location($node, $this->file);
         $scope = $this->currentFunction();
-        $methodScope = $scope?->methodScope ?? $scope;
+        $methodScope = $scope instanceof FunctionScope ? ($scope->methodScope ?? $scope) : null;
         $methodName = $methodScope?->name;
 
         return new StateWrite(
@@ -530,7 +533,7 @@ final class IndexCollectingVisitor extends NodeVisitorAbstract
         }
 
         $scope = $this->currentFunction();
-        $methodScope = $scope?->methodScope ?? $scope;
+        $methodScope = $scope instanceof FunctionScope ? ($scope->methodScope ?? $scope) : null;
 
         $context = new BindingContext(
             $this->file,
@@ -597,7 +600,12 @@ final class IndexCollectingVisitor extends NodeVisitorAbstract
     private function pushFunctionScope(?string $name, bool $isMethod, bool $isStatic): void
     {
         $current = $this->currentFunction();
-        $methodScope = $isMethod ? null : ($current?->methodScope ?? $current);
+        $methodScope = null;
+
+        if (!$isMethod && $current instanceof FunctionScope) {
+            // Closures attribute their writes to the method that declares them.
+            $methodScope = $current->methodScope ?? $current;
+        }
 
         $this->functionStack[] = new FunctionScope(
             $name,

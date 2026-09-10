@@ -1,0 +1,38 @@
+# Example workflow that publishes findings to GitHub code scanning, so they show
+# up as annotations on the pull request diff.
+# Copy this into your own repository as .github/workflows/worker-safety.yml.
+name: Worker Safety (code scanning)
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+  security-events: write
+
+jobs:
+  worker-safety:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.3'
+          coverage: none
+
+      - run: composer install --no-interaction --no-progress
+
+      # `--fail-on=never` keeps the step green so the SARIF always uploads;
+      # code scanning then decides what blocks the merge.
+      - name: Analyze
+        run: vendor/bin/worker-safety scan --format=sarif --fail-on=never > worker-safety.sarif
+
+      - name: Upload SARIF
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: worker-safety.sarif
+          category: worker-safety
