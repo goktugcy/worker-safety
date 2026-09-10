@@ -1,0 +1,78 @@
+{
+    "name": "workersafety/worker-safety",
+    "description": "Static analysis for PHP applications running on persistent workers. Detect cross-request state risks before they reach production.",
+    "type": "library",
+    "keywords": [
+        "static-analysis",
+        "frankenphp",
+        "octane",
+        "roadrunner",
+        "swoole",
+        "worker",
+        "php",
+        "sarif"
+    ],
+    "homepage": "https://github.com/workersafety/worker-safety",
+    "license": "MIT",
+    "authors": [
+        {
+            "name": "Worker Safety Contributors",
+            "homepage": "https://github.com/workersafety/worker-safety/graphs/contributors"
+        }
+    ],
+    "require": {
+        "php": "^8.2",
+        "ext-json": "*",
+        "ext-mbstring": "*",
+        "nikic/php-parser": "^5.3",
+        "symfony/console": "^6.4 || ^7.0",
+        "symfony/yaml": "^6.4 || ^7.0"
+    },
+    "require-dev": {
+        "friendsofphp/php-cs-fixer": "^3.64",
+        "phpstan/phpstan": "^2.1",
+        "phpunit/phpunit": "^11.5 || ^12.0"
+    },
+    "autoload": {
+        "psr-4": {
+            "WorkerSafety\\": "src/"
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "WorkerSafety\\Tests\\": "tests/"
+        }
+    },
+    "bin": [
+        "bin/worker-safety"
+    ],
+    "config": {
+        "sort-packages": true,
+        "optimize-autoloader": true
+    },
+    "extra": {
+        "branch-alias": {
+            "dev-main": "0.1.x-dev"
+        }
+    },
+    "scripts": {
+        "test": "phpunit",
+        "test:coverage": "phpunit --coverage-text",
+        "analyse": "phpstan analyse --memory-limit=512M",
+        "lint": "php-cs-fixer fix --dry-run --diff",
+        "lint:fix": "php-cs-fixer fix",
+        "ci": [
+            "@lint",
+            "@analyse",
+            "@test"
+        ]
+    },
+    "scripts-descriptions": {
+        "test": "Run the PHPUnit test suite.",
+        "analyse": "Run PHPStan static analysis at max level.",
+        "lint": "Check coding style with PHP-CS-Fixer (no changes written).",
+        "lint:fix": "Fix coding style with PHP-CS-Fixer."
+    },
+    "minimum-stability": "stable",
+    "prefer-stable": true
+}
