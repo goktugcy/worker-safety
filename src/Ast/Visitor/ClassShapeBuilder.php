@@ -50,6 +50,7 @@ final class ClassShapeBuilder
         public readonly array $interfaces,
         public readonly Location $location,
         public readonly bool $isAnonymous,
+        public readonly bool $isReadonly = false,
     ) {
     }
 

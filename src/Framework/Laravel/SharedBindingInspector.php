@@ -62,8 +62,15 @@ final class SharedBindingInspector
 
     private function resolveClass(ProjectIndex $index, ContainerBinding $binding): ?ClassShape
     {
-        // Prefer the concrete type from the binding closure, then the abstract.
-        foreach ([$binding->concrete, $binding->abstract] as $candidate) {
+        // Prefer the concrete type from the binding closure, then the abstract
+        // — but only when the abstract actually names a class.
+        $candidates = [$binding->concrete];
+
+        if ($binding->abstractIsClass) {
+            $candidates[] = $binding->abstract;
+        }
+
+        foreach ($candidates as $candidate) {
             if ($candidate === null) {
                 continue;
             }
@@ -82,17 +89,28 @@ final class SharedBindingInspector
         return null;
     }
 
+    /**
+     * The container flushes scoped instances by the abstract they are registered
+     * under, so only a scoped binding of *the same key* makes this one safe.
+     *
+     * `singleton('shared', Context::class)` stays a singleton no matter how many
+     * other keys resolve to the same concrete class.
+     */
     private function hasScopedBinding(ProjectIndex $index, ContainerBinding $binding): bool
     {
-        foreach ([$binding->concrete, $binding->abstract] as $candidate) {
-            if ($candidate === null) {
+        if ($binding->abstract === null) {
+            return false;
+        }
+
+        $needle = strtolower(ltrim($binding->abstract, '\\'));
+
+        foreach ($index->bindings() as $other) {
+            if (!$other->scoped || $other->abstract === null) {
                 continue;
             }
 
-            foreach ($index->bindingsFor($candidate) as $other) {
-                if ($other->scoped) {
-                    return true;
-                }
+            if (strtolower(ltrim($other->abstract, '\\')) === $needle) {
+                return true;
             }
         }
 

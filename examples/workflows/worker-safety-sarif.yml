@@ -1,6 +1,10 @@
 # Example workflow that publishes findings to GitHub code scanning, so they show
 # up as annotations on the pull request diff.
 # Copy this into your own repository as .github/workflows/worker-safety.yml.
+#
+# It lives outside .github/workflows on purpose: it runs `vendor/bin/worker-safety`,
+# which only exists once the package is installed as a dependency, so it is a
+# template rather than a workflow for this repository.
 name: Worker Safety (code scanning)
 
 on:

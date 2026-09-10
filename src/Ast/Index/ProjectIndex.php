@@ -76,7 +76,12 @@ final class ProjectIndex
     }
 
     /**
-     * Resolve by FQCN, falling back to an unambiguous short-name match.
+     * Resolve by FQCN, falling back to an unambiguous short-name match only for
+     * names that carry no namespace of their own.
+     *
+     * A qualified name that is not declared in the analyzed paths must resolve
+     * to nothing: matching `External\Context` against a local `Local\Context`
+     * would attribute one class's risk to another.
      */
     public function findClass(string $name): ?ClassShape
     {
@@ -86,9 +91,11 @@ final class ProjectIndex
             return $exact;
         }
 
-        $short = strtolower(str_contains($name, '\\')
-            ? substr($name, (int) strrpos($name, '\\') + 1)
-            : $name);
+        if (str_contains(ltrim($name, '\\'), '\\')) {
+            return null;
+        }
+
+        $short = strtolower($name);
 
         $candidates = $this->shortNames[$short] ?? [];
 

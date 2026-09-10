@@ -43,7 +43,7 @@ final class ShutdownLifecycleAssumptionRule extends AbstractRule
         return new RuleDefinition(
             RuleId::SHUTDOWN_LIFECYCLE_ASSUMPTION,
             'Shutdown/runtime lifecycle assumption',
-            'Under PHP-FPM the process is torn down after every request, which makes shutdown hooks, exit() and SAPI checks behave in one specific way. A persistent worker keeps the process alive, so the same code means something different.',
+            'Under PHP-FPM the PHP request lifecycle ends after every request — the engine tears down the request context even though the OS worker process is reused — which makes shutdown hooks, exit() and SAPI checks behave in one specific way. An application worker loop keeps one PHP context alive across many requests, so the same code means something different.',
             Severity::Low,
             RuleCategory::Lifecycle,
             [
@@ -110,6 +110,8 @@ final class ShutdownLifecycleAssumptionRule extends AbstractRule
             $perRequest ? Severity::Medium : Severity::Low,
             $context->scope()->symbol(),
             $context->snippet($node),
+            null,
+            $context->excerpt($node),
         );
     }
 
@@ -132,6 +134,8 @@ final class ShutdownLifecycleAssumptionRule extends AbstractRule
             Severity::Medium,
             $context->scope()->symbol(),
             $context->snippet($node),
+            null,
+            $context->excerpt($node),
         );
     }
 
@@ -145,6 +149,8 @@ final class ShutdownLifecycleAssumptionRule extends AbstractRule
             Severity::Medium,
             $context->scope()->symbol(),
             $context->snippet($node),
+            null,
+            $context->excerpt($node),
         );
     }
 
@@ -167,6 +173,8 @@ final class ShutdownLifecycleAssumptionRule extends AbstractRule
             $insideMethod ? Severity::Medium : Severity::Low,
             $context->scope()->symbol(),
             $context->snippet($node),
+            null,
+            $context->excerpt($node),
         );
     }
 
@@ -195,6 +203,8 @@ final class ShutdownLifecycleAssumptionRule extends AbstractRule
             Severity::Low,
             $context->scope()->symbol(),
             $context->snippet($node),
+            null,
+            $context->excerpt($node),
         );
     }
 

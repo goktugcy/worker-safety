@@ -87,6 +87,8 @@ final class MutableStaticPropertyRule extends AbstractRule
                 Severity::Low,
                 new SymbolContext($class->name, null, $property->name),
                 $property->snippet,
+                null,
+                $property->excerpt,
             );
         }
 
@@ -103,6 +105,7 @@ final class MutableStaticPropertyRule extends AbstractRule
             new SymbolContext($class->name, null, $property->name),
             $property->snippet,
             $hasResetPath ? $this->resetRemediation() : null,
+            $property->excerpt,
         );
     }
 
@@ -130,6 +133,8 @@ final class MutableStaticPropertyRule extends AbstractRule
             Severity::Medium,
             new SymbolContext($class->name, null, $property->name),
             $property->snippet,
+            null,
+            $property->excerpt,
         );
     }
 
@@ -215,7 +220,7 @@ final class MutableStaticPropertyRule extends AbstractRule
     {
         return [
             'Make sure the existing reset method runs on every request, not only on the paths that remember to call it.',
-            'Under Laravel Octane, register it in the RequestReceived/RequestTerminated listeners or add the class to `octane.flush`.',
+            'Under Laravel Octane, call it from a RequestReceived or RequestTerminated listener. Note that `octane.flush` will not help: it calls forgetInstance() on container bindings and never touches static properties.',
             'Prefer moving the value into a request-scoped service so that no reset is needed at all.',
         ];
     }

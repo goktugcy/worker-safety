@@ -143,7 +143,9 @@ final class ReportersTest extends TestCase
         self::assertStringContainsString('Parse warnings', $text);
         self::assertStringContainsString('app/Broken.php:18', $text);
         self::assertStringContainsString('Unexpected token', $text);
-        self::assertStringContainsString('1 file(s) could not be fully parsed', $text);
+        // Recoverable: the file was still analyzed, so the scan stays complete.
+        self::assertStringContainsString('1 file(s) were analyzed despite a syntax error', $text);
+        self::assertStringNotContainsString('incomplete', $text);
     }
 
     public function test_console_report_is_plain_text_without_decoration(): void
@@ -283,6 +285,57 @@ final class ReportersTest extends TestCase
             'Could not parse app/Broken.php',
             self::stringAt($sarif, ...[...$path, 0, 'message', 'text']),
         );
+    }
+
+    public function test_sarif_percent_encodes_paths(): void
+    {
+        $report = new ScanReport(
+            '/pro ject',
+            DetectedFramework::none(),
+            RuntimeTargetSet::all(),
+            new FindingCollection([
+                new Finding(
+                    'WS001',
+                    'Mutable static property',
+                    Severity::High,
+                    RuleCategory::StaticState,
+                    new Location('/pro ject/src/path #1.php', 'src/path #1.php', 3),
+                    'message',
+                ),
+            ]),
+            1,
+            [],
+            0,
+            0,
+            0.1,
+            Severity::High,
+            null,
+            null,
+        );
+
+        $sarif = self::decodeJson($this->render(new SarifReporter(), $report));
+
+        $uri = self::stringAt(
+            $sarif,
+            'runs',
+            0,
+            'results',
+            0,
+            'locations',
+            0,
+            'physicalLocation',
+            'artifactLocation',
+            'uri',
+        );
+
+        // A literal `#` would be read as a fragment delimiter, a literal space
+        // is not valid in a URI at all.
+        self::assertSame('src/path%20%231.php', $uri);
+        self::assertSame('src/path #1.php', rawurldecode($uri));
+
+        $base = self::stringAt($sarif, 'runs', 0, 'originalUriBaseIds', 'SRCROOT', 'uri');
+
+        self::assertSame('file:///pro%20ject/', $base);
     }
 
     public function test_the_factory_maps_formats_to_reporters(): void

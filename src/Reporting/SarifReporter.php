@@ -74,7 +74,10 @@ final class SarifReporter implements Reporter
                     ],
                     'invocations' => [
                         [
-                            'executionSuccessful' => true,
+                            // False whenever a file could not be analyzed: a
+                            // consumer must be able to tell a complete run from
+                            // a partial one.
+                            'executionSuccessful' => !$report->isIncomplete(),
                             'toolExecutionNotifications' => $this->notifications($report),
                         ],
                     ],
@@ -160,7 +163,7 @@ final class SarifReporter implements Reporter
                 [
                     'physicalLocation' => [
                         'artifactLocation' => [
-                            'uri' => $finding->location->relativePath,
+                            'uri' => self::encodePath($finding->location->relativePath),
                             'uriBaseId' => 'SRCROOT',
                         ],
                         'region' => $region,
@@ -215,7 +218,7 @@ final class SarifReporter implements Reporter
                     [
                         'physicalLocation' => [
                             'artifactLocation' => [
-                                'uri' => $failure->relativePath,
+                                'uri' => self::encodePath($failure->relativePath),
                                 'uriBaseId' => 'SRCROOT',
                             ],
                             'region' => ['startLine' => max(1, $failure->line)],
@@ -227,10 +230,30 @@ final class SarifReporter implements Reporter
         );
     }
 
+    /**
+     * Percent-encode a relative path for use as a SARIF artifact URI.
+     *
+     * Path separators stay literal; everything else is escaped, so a file named
+     * `path #1.php` cannot turn its `#` into a URI fragment delimiter.
+     */
+    private static function encodePath(string $relative): string
+    {
+        $segments = explode('/', str_replace('\\', '/', $relative));
+
+        return implode('/', array_map(static fn (string $segment): string => rawurlencode($segment), $segments));
+    }
+
     private function directoryUri(string $path): string
     {
         $normalized = rtrim(str_replace('\\', '/', $path), '/');
+        $prefix = '';
 
-        return 'file://' . $normalized . '/';
+        // Keep a Windows drive letter readable: `C:` must not become `C%3A`.
+        if (preg_match('#^([a-zA-Z]:)(/.*)?$#', $normalized, $matches) === 1) {
+            $prefix = '/' . $matches[1];
+            $normalized = $matches[2] ?? '';
+        }
+
+        return 'file://' . $prefix . self::encodePath($normalized) . '/';
     }
 }

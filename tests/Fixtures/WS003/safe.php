@@ -26,4 +26,12 @@ final class EnvironmentReader
     {
         return (string) mb_internal_encoding();
     }
+
+    /**
+     * A zero locale argument queries the current setting without changing it.
+     */
+    public function locale(): string
+    {
+        return (string) setlocale(LC_ALL, 0);
+    }
 }

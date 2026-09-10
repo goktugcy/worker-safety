@@ -25,6 +25,7 @@ final class ScanOptions
         public readonly ?string $failOn = null,
         public readonly bool $ignoreBaseline = false,
         public readonly ?string $baselinePath = null,
+        public readonly bool $allowParseErrors = false,
     ) {
     }
 }

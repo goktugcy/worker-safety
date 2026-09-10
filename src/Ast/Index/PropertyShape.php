@@ -29,6 +29,7 @@ final class PropertyShape
         public readonly DefaultValueKind $default,
         public readonly Location $location,
         public readonly ?string $snippet,
+        public readonly ?string $excerpt = null,
     ) {
     }
 

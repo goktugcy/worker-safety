@@ -31,6 +31,7 @@ final class ConfigurationLoader
         'runtime',
         'rules',
         'fail_on',
+        'fail_on_parse_error',
         'baseline',
         'ignore',
     ];
@@ -144,6 +145,8 @@ final class ConfigurationLoader
             $this->baseline($data, $projectRoot),
             $this->ignore($data, $knownRuleIds),
             $path,
+            $this->failOnParseError($data),
+            $this->baselineDisabled($data),
         );
     }
 
@@ -344,6 +347,41 @@ final class ConfigurationLoader
     /**
      * @param array<mixed, mixed> $data
      */
+    private function failOnParseError(array $data): bool
+    {
+        if (!array_key_exists('fail_on_parse_error', $data)) {
+            return true;
+        }
+
+        $value = $data['fail_on_parse_error'];
+
+        if (!is_bool($value)) {
+            throw ConfigurationException::invalidValue('fail_on_parse_error', 'expected a boolean.');
+        }
+
+        return $value;
+    }
+
+    /**
+     * `baseline: false` means "explicitly off", which is different from an
+     * absent setting: only the latter may pick up a baseline file automatically.
+     *
+     * @param array<mixed, mixed> $data
+     */
+    private function baselineDisabled(array $data): bool
+    {
+        if (!array_key_exists('baseline', $data)) {
+            return false;
+        }
+
+        $value = $data['baseline'];
+
+        return $value === false || $value === null;
+    }
+
+    /**
+     * @param array<mixed, mixed> $data
+     */
     private function baseline(array $data, string $projectRoot): ?string
     {
         if (!array_key_exists('baseline', $data)) {
@@ -443,7 +481,7 @@ final class ConfigurationLoader
      */
     private function applyBaselineDefault(Configuration $configuration, string $projectRoot): Configuration
     {
-        if ($configuration->baseline !== null) {
+        if ($configuration->baseline !== null || $configuration->baselineDisabled) {
             return $configuration;
         }
 

@@ -25,6 +25,7 @@ final class StaticLocalVariable
         public readonly Location $location,
         public readonly ?string $snippet,
         public readonly array $writes,
+        public readonly ?string $excerpt = null,
     ) {
     }
 

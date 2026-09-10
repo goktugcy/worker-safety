@@ -37,6 +37,7 @@ final class ScanReport
         public readonly array $scannedPaths = [],
         public readonly string $phpVersion = PHP_VERSION,
         public readonly string $toolVersion = ApplicationInfo::VERSION,
+        public readonly bool $failOnParseError = true,
     ) {
     }
 
@@ -48,9 +49,53 @@ final class ScanReport
         return $this->findings->countsBySeverity();
     }
 
-    public function failed(): bool
+    /**
+     * True when at least one file could not be analyzed at all.
+     *
+     * A scan that skipped files is not evidence of safety, so it is tracked
+     * separately from the severity threshold.
+     */
+    public function isIncomplete(): bool
+    {
+        return $this->unanalyzedFiles() !== [];
+    }
+
+    /**
+     * Project-relative paths of the files that produced no usable AST.
+     *
+     * @return list<string>
+     */
+    public function unanalyzedFiles(): array
+    {
+        $paths = [];
+
+        foreach ($this->parseFailures as $failure) {
+            if ($failure->fatal) {
+                $paths[$failure->relativePath] = true;
+            }
+        }
+
+        return array_keys($paths);
+    }
+
+    public function unanalyzedFileCount(): int
+    {
+        return count($this->unanalyzedFiles());
+    }
+
+    public function failedOnSeverity(): bool
     {
         return $this->failOn instanceof Severity && $this->findings->hasSeverityAtLeast($this->failOn);
+    }
+
+    public function failedOnIncompleteAnalysis(): bool
+    {
+        return $this->failOnParseError && $this->isIncomplete();
+    }
+
+    public function failed(): bool
+    {
+        return $this->failedOnSeverity() || $this->failedOnIncompleteAnalysis();
     }
 
     public function exitCode(): ExitCode

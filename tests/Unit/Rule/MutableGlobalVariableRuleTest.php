@@ -35,12 +35,19 @@ final class MutableGlobalVariableRuleTest extends TestCase
         self::assertStringContainsString("\$GLOBALS['tenant']", $finding->message);
     }
 
-    public function test_writing_to_a_request_superglobal_is_medium(): void
+    /**
+     * FrankenPHP documents $_GET/$_POST/$_COOKIE/$_FILES/$_SERVER/$_REQUEST as
+     * reset between requests, so rewriting one is an input-integrity smell
+     * rather than the cross-request retention that $GLOBALS and $_ENV cause.
+     */
+    public function test_writing_to_a_request_superglobal_is_low(): void
     {
         $result = AnalyzerHarness::analyze('WS002/positive.php', [new MutableGlobalVariableRule()]);
 
-        $this->assertHasFinding($result, RuleId::MUTABLE_GLOBAL_VARIABLE, 21, Severity::Medium);
-        $this->assertHasFinding($result, RuleId::MUTABLE_GLOBAL_VARIABLE, 22, Severity::Medium);
+        $get = $this->assertHasFinding($result, RuleId::MUTABLE_GLOBAL_VARIABLE, 21, Severity::Low);
+        $this->assertHasFinding($result, RuleId::MUTABLE_GLOBAL_VARIABLE, 22, Severity::Low);
+
+        self::assertStringContainsString('not by itself a cross-request leak', (string) $get->details);
     }
 
     public function test_reading_superglobals_is_never_reported(): void

@@ -81,6 +81,8 @@ final class MutableSingletonRule extends AbstractRule
                 Severity::Low,
                 new SymbolContext($class->name, null, $holder->name),
                 $holder->snippet,
+                null,
+                $holder->excerpt,
             );
         }
 
@@ -103,6 +105,7 @@ final class MutableSingletonRule extends AbstractRule
             new SymbolContext($class->name, null, $holder->name),
             $holder->snippet,
             $requestScoped !== [] ? $this->requestScopedRemediation() : null,
+            $holder->excerpt,
         );
     }
 

@@ -64,6 +64,7 @@ abstract class AbstractRule implements Rule
         ?SymbolContext $symbol = null,
         ?string $snippet = null,
         ?array $remediation = null,
+        ?string $excerpt = null,
     ): Finding {
         $definition = $this->definition();
 
@@ -80,6 +81,7 @@ abstract class AbstractRule implements Rule
             $snippet,
             $context->runtimes()->intersect($definition->runtimes),
             $context->framework()->findingLabel(),
+            $excerpt,
         );
     }
 }

@@ -157,6 +157,8 @@ final class PersistentListenerRegistrationRule extends AbstractRule
             $this->adjust(Severity::Medium, $context),
             $context->scope()->symbol(),
             $context->snippet($node),
+            null,
+            $context->excerpt($node),
         );
     }
 
@@ -229,11 +231,13 @@ final class PersistentListenerRegistrationRule extends AbstractRule
         }
 
         $base = AstHelper::unwrapArrayDim($node->var);
-        $name = match (true) {
-            $base instanceof Expr\StaticPropertyFetch && $base->name instanceof Node\VarLikeIdentifier => $base->name->toString(),
-            $base instanceof Expr\PropertyFetch && $base->name instanceof Identifier => $base->name->toString(),
-            default => null,
-        };
+
+        // Only a static registry is known to outlive the request. An instance
+        // property might belong to an object created for this request, and
+        // guessing costs more trust than the finding is worth.
+        $name = $base instanceof Expr\StaticPropertyFetch && $base->name instanceof Node\VarLikeIdentifier
+            ? $base->name->toString()
+            : null;
 
         if ($name === null || !$this->looksLikeListenerRegistry($name)) {
             return null;
@@ -242,15 +246,17 @@ final class PersistentListenerRegistrationRule extends AbstractRule
         return $this->finding(
             $context,
             $context->location($node),
-            sprintf('A callback is appended to the shared $%s registry.', $name),
+            sprintf('A callback is appended to the static $%s registry.', $name),
             sprintf(
-                '$%s is reached from %s and holds callables for the lifetime of the object. When that object outlives the request — a static property, or a singleton service — every request adds another callback and the earlier ones keep running.',
+                'The static $%s array is reached from %s and holds callables for the whole worker process. Every request appends another callback, and the ones registered by earlier requests keep running.',
                 $name,
                 $context->scope()->describeLocationScope(),
             ),
             $this->adjust(Severity::Medium, $context),
             $context->scope()->symbol($name),
             $context->snippet($node),
+            null,
+            $context->excerpt($node),
         );
     }
 
@@ -280,6 +286,8 @@ final class PersistentListenerRegistrationRule extends AbstractRule
             $this->adjust(Severity::Medium, $context),
             $context->scope()->symbol(),
             $context->snippet($node),
+            null,
+            $context->excerpt($node),
         );
     }
 

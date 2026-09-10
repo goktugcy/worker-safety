@@ -71,7 +71,9 @@ final class ConsoleReporter implements Reporter
 
     private function writeNoFindings(ScanReport $report, OutputInterface $output): void
     {
-        $output->writeln('<ws-pass>No worker-safety risks found.</ws-pass>');
+        $output->writeln($report->isIncomplete()
+            ? '<ws-medium>No worker-safety risks found in the files that could be analyzed.</ws-medium>'
+            : '<ws-pass>No worker-safety risks found.</ws-pass>');
 
         if ($report->suppressedCount > 0 || $report->baselineFilteredCount > 0) {
             $output->writeln('');
@@ -237,10 +239,19 @@ final class ConsoleReporter implements Reporter
             ));
         }
 
-        if ($report->parseFailures !== []) {
+        $partiallyParsed = $this->countFailedFiles($report->parseFailures) - $report->unanalyzedFileCount();
+
+        if ($partiallyParsed > 0) {
             $output->writeln(sprintf(
-                '  <ws-muted>%d file(s) could not be fully parsed.</ws-muted>',
-                $this->countFailedFiles($report->parseFailures),
+                '  <ws-muted>%d file(s) were analyzed despite a syntax error.</ws-muted>',
+                $partiallyParsed,
+            ));
+        }
+
+        if ($report->isIncomplete()) {
+            $output->writeln(sprintf(
+                '  <ws-medium>%d file(s) were not analyzed at all, so this scan is incomplete.</ws-medium>',
+                $report->unanalyzedFileCount(),
             ));
         }
 
@@ -249,11 +260,22 @@ final class ConsoleReporter implements Reporter
         if ($report->failed()) {
             $output->writeln('<ws-fail>Result: FAILED</ws-fail>');
             $output->writeln('');
-            $output->writeln(sprintf(
-                '%d finding(s) at or above %s.',
-                $report->failingCount(),
-                strtoupper(($report->failOn ?? Severity::High)->value),
-            ));
+
+            if ($report->failedOnSeverity()) {
+                $output->writeln(sprintf(
+                    '%d finding(s) at or above %s.',
+                    $report->failingCount(),
+                    strtoupper(($report->failOn ?? Severity::High)->value),
+                ));
+            }
+
+            if ($report->failedOnIncompleteAnalysis()) {
+                $output->writeln(sprintf(
+                    '%d file(s) could not be analyzed, so the scan cannot vouch for them. '
+                    . 'Fix them, or pass --allow-parse-errors to accept the gap.',
+                    $report->unanalyzedFileCount(),
+                ));
+            }
         } else {
             $output->writeln('<ws-pass>Result: PASSED</ws-pass>');
 

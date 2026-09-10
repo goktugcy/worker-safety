@@ -25,13 +25,34 @@ final class RuntimeEnvironmentMutationRuleTest extends TestCase
         $this->assertHasFinding($result, RuleId::RUNTIME_ENVIRONMENT_MUTATION, 12, Severity::High);
     }
 
-    public function test_server_writes_and_ini_changes_are_medium(): void
+    public function test_ini_and_timezone_changes_are_medium(): void
     {
         $result = AnalyzerHarness::analyze('WS003/positive.php', [new RuntimeEnvironmentMutationRule()]);
 
-        $this->assertHasFinding($result, RuleId::RUNTIME_ENVIRONMENT_MUTATION, 13, Severity::Medium);
         $this->assertHasFinding($result, RuleId::RUNTIME_ENVIRONMENT_MUTATION, 14, Severity::Medium);
         $this->assertHasFinding($result, RuleId::RUNTIME_ENVIRONMENT_MUTATION, 15, Severity::Medium);
+    }
+
+    /**
+     * $_SERVER is rebuilt for every request by the supported runtimes, unlike
+     * $_ENV, which FrankenPHP documents as the exception.
+     */
+    public function test_server_writes_rank_below_env_writes(): void
+    {
+        $result = AnalyzerHarness::analyze('WS003/positive.php', [new RuntimeEnvironmentMutationRule()]);
+
+        $env = $this->assertHasFinding($result, RuleId::RUNTIME_ENVIRONMENT_MUTATION, 12, Severity::High);
+        $server = $this->assertHasFinding($result, RuleId::RUNTIME_ENVIRONMENT_MUTATION, 13, Severity::Low);
+
+        self::assertStringContainsString('documented exception', (string) $env->details);
+        self::assertStringContainsString('rebuilt for every request', (string) $server->details);
+    }
+
+    public function test_a_locale_query_is_not_a_mutation(): void
+    {
+        $result = AnalyzerHarness::analyze('WS003/safe.php', [new RuntimeEnvironmentMutationRule()]);
+
+        $this->assertNoFindings($result);
     }
 
     public function test_reads_are_never_reported(): void

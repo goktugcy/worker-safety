@@ -32,8 +32,8 @@ enum RuntimeTarget: string
     public function note(): string
     {
         return match ($this) {
-            self::FrankenPhp => 'FrankenPHP worker mode keeps the same PHP process (and therefore every static, global and singleton) alive across the whole worker loop.',
-            self::Octane => 'Laravel Octane resets framework container state between requests, but application-owned statics and globals are never flushed unless you list them in octane.flush or reset them yourself.',
+            self::FrankenPhp => 'FrankenPHP worker mode keeps the same PHP process (and therefore every static, global and singleton) alive across the whole worker loop. It does reset $_GET, $_POST, $_COOKIE, $_FILES, $_SERVER and $_REQUEST between requests; $_ENV is the documented exception.',
+            self::Octane => 'Laravel Octane resets framework container state between requests, but application-owned statics and globals are never flushed for you. `octane.flush` calls forgetInstance() on container bindings only, so a static property still needs an explicit reset from a RequestReceived or RequestTerminated listener.',
             self::RoadRunner => 'RoadRunner reuses the PHP worker process for many requests; only a worker restart (max_jobs) clears retained state.',
             self::Swoole => 'Swoole runs requests in coroutines inside a shared process, so retained state is visible across requests and may be read concurrently.',
         };

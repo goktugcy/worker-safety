@@ -50,6 +50,9 @@
         "bin/worker-safety"
     ],
     "config": {
+        "platform": {
+            "php": "8.2.0"
+        },
         "sort-packages": true,
         "optimize-autoloader": true
     },

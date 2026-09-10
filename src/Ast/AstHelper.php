@@ -346,6 +346,30 @@ final class AstHelper
         return null;
     }
 
+    /**
+     * A service-container key: either a class reference (`X::class`, or a
+     * string spelled like a class) or a free-form string id such as
+     * `'auth.context'`.
+     *
+     * @return array{0: string, 1: bool}|null the key and whether it names a class
+     */
+    public static function containerKeyFromExpr(Expr $expr, ?string $currentClass, ?string $parentClass): ?array
+    {
+        $className = self::classNameFromExpr($expr, $currentClass, $parentClass);
+
+        if ($className !== null) {
+            return [$className, true];
+        }
+
+        $literal = self::stringValue($expr);
+
+        if ($literal !== null && trim($literal) !== '') {
+            return [$literal, false];
+        }
+
+        return null;
+    }
+
     public static function identifierName(Node $node): ?string
     {
         if ($node instanceof Identifier) {
@@ -360,12 +384,21 @@ final class AstHelper
     }
 
     /**
-     * Lowercased name of a plain function call, or null for dynamic calls.
+     * Lowercased, resolved name of a plain function call, or null for dynamic calls.
+     *
+     * Uses the name the resolver worked out rather than the source spelling, so
+     * `use function putenv as changeEnv;` is still recognised as `putenv`.
      */
     public static function functionName(Expr\FuncCall $call): ?string
     {
         if (!$call->name instanceof Name) {
             return null;
+        }
+
+        $resolved = $call->name->getAttribute('resolvedName');
+
+        if ($resolved instanceof Name) {
+            return strtolower(ltrim($resolved->toString(), '\\'));
         }
 
         return strtolower(ltrim($call->name->toString(), '\\'));

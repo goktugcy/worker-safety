@@ -70,8 +70,13 @@ final class JsonReporter implements Reporter
                 'suppressed' => $report->suppressedCount,
                 'baseline_filtered' => $report->baselineFilteredCount,
                 'parse_errors' => $report->parseFailureCount(),
+                'files_not_analyzed' => $report->unanalyzedFileCount(),
+                'incomplete' => $report->isIncomplete(),
                 'fail_on' => $report->failOn?->value,
+                'fail_on_parse_error' => $report->failOnParseError,
                 'failed' => $report->failed(),
+                'failed_on_severity' => $report->failedOnSeverity(),
+                'failed_on_incomplete_analysis' => $report->failedOnIncompleteAnalysis(),
                 'by_rule' => $report->findings->countsByRule(),
             ],
             'findings' => array_map(

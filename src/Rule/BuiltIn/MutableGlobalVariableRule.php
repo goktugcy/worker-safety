@@ -40,7 +40,7 @@ final class MutableGlobalVariableRule extends AbstractRule
     private const REQUEST_SUPERGLOBALS = ['_GET', '_POST', '_REQUEST', '_COOKIE', '_FILES'];
 
     /**
-     * @var array<string, array{location: Location, severity: Severity, message: string, details: string, symbol: SymbolContext, snippet: string|null, count: int}>
+     * @var array<string, array{location: Location, severity: Severity, message: string, details: string, symbol: SymbolContext, snippet: string|null, excerpt: string|null, count: int}>
      */
     private array $pending = [];
 
@@ -123,6 +123,8 @@ final class MutableGlobalVariableRule extends AbstractRule
                 $entry['severity'],
                 $entry['symbol'],
                 $entry['snippet'],
+                null,
+                $entry['excerpt'],
             );
         }
 
@@ -158,6 +160,7 @@ final class MutableGlobalVariableRule extends AbstractRule
                     : sprintf('$%s lives in the global scope, which is created once per PHP process. Reading it means the behaviour of this request depends on whatever an earlier request left behind.', $name),
                 new SymbolContext($context->scope()->className(), $context->scope()->methodName(), null, $name),
                 $context->snippet($node),
+                $context->excerpt($node),
             );
         }
     }
@@ -186,6 +189,7 @@ final class MutableGlobalVariableRule extends AbstractRule
                 ),
                 new SymbolContext($context->scope()->className(), $context->scope()->methodName(), null, 'GLOBALS'),
                 $context->snippet($node),
+                $context->excerpt($node),
             );
 
             return;
@@ -195,15 +199,15 @@ final class MutableGlobalVariableRule extends AbstractRule
             $this->remember(
                 'superglobal:' . $base->name,
                 $context->location($node),
-                Severity::Medium,
-                sprintf('Request superglobal $%s is modified at runtime.', $base->name),
+                Severity::Low,
+                sprintf('Request superglobal $%s is rewritten at runtime.', $base->name),
                 sprintf(
-                    '$%s is populated once per request by the SAPI. Persistent worker runtimes rebuild it per request from the incoming message, but a value written by application code can outlive the request that wrote it, and code that reads $%s later cannot tell the difference between real input and an injected value.',
-                    $base->name,
+                    'The supported runtimes do rebuild $%s for every request — FrankenPHP documents $_GET, $_POST, $_COOKIE, $_FILES, $_SERVER and $_REQUEST as reset, with $_ENV as the exception — so this is not by itself a cross-request leak. It is reported because rewriting request input in place makes later reads indistinguishable from real input, and because any code that then caches the value in a static or a global does turn it into one.',
                     $base->name,
                 ),
                 new SymbolContext($context->scope()->className(), $context->scope()->methodName(), null, $base->name),
                 $context->snippet($node),
+                $context->excerpt($node),
             );
         }
     }
@@ -228,6 +232,7 @@ final class MutableGlobalVariableRule extends AbstractRule
         string $details,
         SymbolContext $symbol,
         ?string $snippet,
+        ?string $excerpt,
     ): void {
         if (isset($this->pending[$key])) {
             ++$this->pending[$key]['count'];
@@ -247,6 +252,7 @@ final class MutableGlobalVariableRule extends AbstractRule
             'details' => $details,
             'symbol' => $symbol,
             'snippet' => $snippet,
+            'excerpt' => $excerpt,
             'count' => 1,
         ];
     }

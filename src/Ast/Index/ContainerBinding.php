@@ -24,6 +24,8 @@ final class ContainerBinding
         public readonly ?string $snippet = null,
         public readonly ?string $inClass = null,
         public readonly ?string $inMethod = null,
+        public readonly bool $abstractIsClass = true,
+        public readonly ?string $excerpt = null,
     ) {
     }
 
@@ -31,9 +33,17 @@ final class ContainerBinding
      * The class whose shape determines the risk: the closure's concrete type
      * when known, otherwise the abstract identifier.
      */
+    /**
+     * The class whose shape decides the risk. A free-form service id such as
+     * `'auth.context'` is not one, so only the concrete type counts there.
+     */
     public function resolvedClass(): ?string
     {
-        return $this->concrete ?? $this->abstract;
+        if ($this->concrete !== null) {
+            return $this->concrete;
+        }
+
+        return $this->abstractIsClass ? $this->abstract : null;
     }
 
     public function describeTarget(): string

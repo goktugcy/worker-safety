@@ -31,6 +31,7 @@ final class Finding
         public readonly ?string $snippet = null,
         public readonly RuntimeTargetSet $runtimes = new RuntimeTargetSet([]),
         public readonly ?string $framework = null,
+        public readonly ?string $excerpt = null,
     ) {
     }
 
@@ -53,6 +54,7 @@ final class Finding
             $this->snippet,
             $this->runtimes,
             $this->framework,
+            $this->excerpt,
         );
     }
 
@@ -71,6 +73,7 @@ final class Finding
             $this->snippet,
             $runtimes,
             $this->framework,
+            $this->excerpt,
         );
     }
 
@@ -78,13 +81,22 @@ final class Finding
      * Line independent identity, used by the baseline so that unrelated edits
      * above a finding do not resurrect it.
      */
+    /**
+     * Line independent identity, used by the baseline so that unrelated edits
+     * above a finding do not resurrect it.
+     *
+     * The code component is the whole reported construct, not the single line
+     * shown in reports: two calls that differ only on a continuation line must
+     * not share an identity, or a baseline would accept the changed one
+     * without review.
+     */
     public function fingerprint(): string
     {
         return substr(hash('sha256', implode("\0", [
             $this->ruleId,
             $this->location->relativePath,
             $this->symbol->describe() ?? '',
-            self::normalizeSnippet($this->snippet ?? $this->message),
+            self::normalizeSnippet($this->excerpt ?? $this->snippet ?? $this->message),
         ])), 0, 32);
     }
 

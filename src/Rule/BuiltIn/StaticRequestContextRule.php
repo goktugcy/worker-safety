@@ -109,6 +109,8 @@ final class StaticRequestContextRule extends AbstractRule
             $severity,
             new SymbolContext($class->name, null, $property->name),
             $property->snippet,
+            null,
+            $property->excerpt,
         );
     }
 
@@ -143,6 +145,8 @@ final class StaticRequestContextRule extends AbstractRule
             $local->hasClearingWrite() ? Severity::High : Severity::Critical,
             new SymbolContext($local->inClass, $local->inFunction, null, $local->name),
             $local->snippet,
+            null,
+            $local->excerpt,
         );
     }
 

@@ -17,6 +17,7 @@ use WorkerSafety\Application\ApplicationInfo;
 use WorkerSafety\Application\ExitCode;
 use WorkerSafety\Baseline\Baseline;
 use WorkerSafety\Baseline\BaselineRepository;
+use WorkerSafety\Exception\AnalysisException;
 use WorkerSafety\Reporting\OutputFormat;
 use WorkerSafety\Reporting\ReporterFactory;
 use WorkerSafety\Runtime\RuntimeTargetSet;
@@ -78,6 +79,12 @@ final class ScanCommand extends AbstractCommand
                 'Write the current findings to the baseline file instead of reporting a failure',
             )
             ->addOption('no-progress', null, InputOption::VALUE_NONE, 'Do not render a progress bar')
+            ->addOption(
+                'allow-parse-errors',
+                null,
+                InputOption::VALUE_NONE,
+                'Report files that could not be analyzed as warnings instead of failing the scan',
+            )
             ->setHelp($this->help());
     }
 
@@ -97,6 +104,7 @@ final class ScanCommand extends AbstractCommand
             $this->stringOption($input, 'fail-on'),
             (bool) $input->getOption('no-baseline') || $generateBaseline,
             $this->stringOption($input, 'baseline'),
+            (bool) $input->getOption('allow-parse-errors'),
         );
 
         $outcome = $this->scanService->scan(
@@ -125,6 +133,16 @@ final class ScanCommand extends AbstractCommand
             ?? Paths::normalize($projectRoot . '/' . ApplicationInfo::BASELINE_FILE);
 
         $path = Paths::makeAbsolute($path, $projectRoot);
+
+        if ($outcome->report->isIncomplete() && !(bool) $input->getOption('allow-parse-errors')) {
+            throw new AnalysisException(sprintf(
+                'Refusing to write a baseline from an incomplete scan: %d file(s) could not be analyzed (%s). '
+                . 'Fix them, or pass --allow-parse-errors to accept the gap.',
+                $outcome->report->unanalyzedFileCount(),
+                implode(', ', array_slice($outcome->report->unanalyzedFiles(), 0, 3)),
+            ));
+        }
+
         $baseline = Baseline::fromFindings($outcome->findingsBeforeBaseline);
 
         $this->baselines->save($path, $baseline);
@@ -222,7 +240,7 @@ final class ScanCommand extends AbstractCommand
             <comment>Exit codes</comment>
 
               0  no findings at or above the failure threshold
-              1  findings reached the threshold
+              1  findings reached the threshold, or a file could not be analyzed
               2  invalid configuration or CLI option
               3  internal error
             HELP;

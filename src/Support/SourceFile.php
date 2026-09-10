@@ -58,6 +58,38 @@ final class SourceFile
         return $trimmed === '' ? null : $trimmed;
     }
 
+    /**
+     * Whitespace-normalized source of a line range.
+     *
+     * Used as the identity of a finding: a single display line is not enough,
+     * because `putenv(` looks the same no matter what argument follows it on
+     * the next line.
+     */
+    public function excerpt(int $startLine, ?int $endLine = null, int $maxLines = 20): ?string
+    {
+        $endLine = max($startLine, $endLine ?? $startLine);
+        $endLine = min($endLine, $startLine + $maxLines - 1);
+
+        $parts = [];
+
+        for ($line = $startLine; $line <= $endLine; ++$line) {
+            $source = $this->line($line);
+
+            if ($source === null) {
+                break;
+            }
+
+            $parts[] = trim($source);
+        }
+
+        $joined = trim(implode(' ', $parts));
+        $collapsed = preg_replace('/\s+/', ' ', $joined);
+
+        $result = trim($collapsed ?? $joined);
+
+        return $result === '' ? null : $result;
+    }
+
     public function lineCount(): int
     {
         return count($this->lines());

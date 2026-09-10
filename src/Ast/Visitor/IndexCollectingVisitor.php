@@ -45,8 +45,9 @@ final class IndexCollectingVisitor extends NodeVisitorAbstract
     private const SHRINKING_FUNCTIONS = [
         'array_shift' => true,
         'array_pop' => true,
+        // array_splice() takes its subject by reference; array_slice() returns
+        // a copy and leaves the source untouched, so it is not a release path.
         'array_splice' => true,
-        'array_slice' => true,
     ];
 
     /**
@@ -201,6 +202,9 @@ final class IndexCollectingVisitor extends NodeVisitorAbstract
             $interfaces,
             AstHelper::location($node, $this->file),
             $isAnonymous,
+            // PHP 8.2 `readonly class`: every declared property is readonly,
+            // including promoted constructor parameters.
+            $node instanceof Stmt\Class_ && $node->isReadonly(),
         );
     }
 
@@ -248,7 +252,7 @@ final class IndexCollectingVisitor extends NodeVisitorAbstract
                 $prop->name->toString(),
                 $class->name,
                 $node->isStatic(),
-                $node->isReadonly(),
+                $node->isReadonly() || $class->isReadonly,
                 false,
                 $visibility,
                 AstHelper::typeToString($node->type),
@@ -258,6 +262,7 @@ final class IndexCollectingVisitor extends NodeVisitorAbstract
                 AstHelper::defaultValueKind($prop->default),
                 $location,
                 $this->file->snippet($location->line),
+                $this->file->excerpt($location->line, $location->endLine),
             ));
         }
     }
@@ -287,7 +292,7 @@ final class IndexCollectingVisitor extends NodeVisitorAbstract
                 $param->var->name,
                 $class->name,
                 false,
-                $param->isReadonly(),
+                $param->isReadonly() || $class->isReadonly,
                 true,
                 $visibility,
                 AstHelper::typeToString($param->type),
@@ -297,6 +302,7 @@ final class IndexCollectingVisitor extends NodeVisitorAbstract
                 AstHelper::defaultValueKind($param->default),
                 $location,
                 $this->file->snippet($location->line),
+                $this->file->excerpt($location->line, $location->endLine),
             ));
         }
     }
@@ -321,6 +327,7 @@ final class IndexCollectingVisitor extends NodeVisitorAbstract
                 $location,
                 $this->file->snippet($location->line),
                 AstHelper::defaultValueKind($staticVar->default),
+                $this->file->excerpt($location->line, $location->endLine),
             );
         }
     }
@@ -418,12 +425,17 @@ final class IndexCollectingVisitor extends NodeVisitorAbstract
     private function recordWrite(Expr $target, WriteKind $kind, Node $node): void
     {
         $base = AstHelper::unwrapArrayDim($target);
-        $dimensionKind = $target instanceof Expr\ArrayDimFetch
-            ? $this->dimensionWriteKind($target, $base)
+        $dimension = $target instanceof Expr\ArrayDimFetch
+            ? $this->dimensionWrite($target, $base)
             : null;
 
+        // A clearing operation stays clearing even when it targets a dimension:
+        // `unset(self::$x[$k])` removes an entry, it does not add one.
+        $effective = $kind->isClearing() ? $kind : ($dimension['kind'] ?? $kind);
+        $literalKey = $dimension['literalKey'] ?? false;
+
         if ($base instanceof Expr\StaticPropertyFetch) {
-            $this->recordStaticPropertyWrite($base, $dimensionKind ?? $kind, $kind, $node);
+            $this->recordStaticPropertyWrite($base, $effective, $node, $literalKey);
 
             return;
         }
@@ -438,16 +450,20 @@ final class IndexCollectingVisitor extends NodeVisitorAbstract
             $scope = $this->currentFunction();
 
             if ($scope instanceof FunctionScope && $scope->hasStaticLocal($base->name)) {
-                $scope->recordStaticLocalWrite($base->name, $this->makeWrite($dimensionKind ?? $kind, $node));
+                $scope->recordStaticLocalWrite($base->name, $this->makeWrite($effective, $node, $literalKey));
             }
         }
     }
 
     /**
-     * `self::$x[] = …` is an append, `self::$x[$k] = …` is a keyed write, but
-     * `unset(self::$x[$k])` stays a clearing write.
+     * Classify a write through an array dimension.
+     *
+     * `self::$x[] = …` appends; `self::$x[$k] = …` is a keyed write, and a
+     * literal key means the entry count cannot run away.
+     *
+     * @return array{kind: WriteKind, literalKey: bool}|null
      */
-    private function dimensionWriteKind(Expr\ArrayDimFetch $target, Expr $base): ?WriteKind
+    private function dimensionWrite(Expr\ArrayDimFetch $target, Expr $base): ?array
     {
         $innermost = $target;
 
@@ -459,14 +475,21 @@ final class IndexCollectingVisitor extends NodeVisitorAbstract
             return null;
         }
 
-        return $innermost->dim === null ? WriteKind::Append : WriteKind::KeyedWrite;
+        if ($innermost->dim === null) {
+            return ['kind' => WriteKind::Append, 'literalKey' => false];
+        }
+
+        return [
+            'kind' => WriteKind::KeyedWrite,
+            'literalKey' => $innermost->dim instanceof Node\Scalar,
+        ];
     }
 
     private function recordStaticPropertyWrite(
         Expr\StaticPropertyFetch $fetch,
         WriteKind $kind,
-        WriteKind $originalKind,
         Node $node,
+        bool $literalKey = false,
     ): void {
         if (!$fetch->name instanceof Node\VarLikeIdentifier) {
             return;
@@ -482,12 +505,9 @@ final class IndexCollectingVisitor extends NodeVisitorAbstract
             return;
         }
 
-        // A clearing operation stays clearing even when it targets a dimension.
-        $effective = $originalKind->isClearing() ? $originalKind : $kind;
-
         $property = $fetch->name->toString();
 
-        $this->index->addStaticWrite($class, $property, $this->makeWrite($effective, $node));
+        $this->index->addStaticWrite($class, $property, $this->makeWrite($kind, $node, $literalKey));
         $this->currentFunction()?->recordStaticPropertyAssignment($property);
     }
 
@@ -504,7 +524,7 @@ final class IndexCollectingVisitor extends NodeVisitorAbstract
         $this->currentFunction()?->recordInstancePropertyAssignment($fetch->name->toString());
     }
 
-    private function makeWrite(WriteKind $kind, Node $node): StateWrite
+    private function makeWrite(WriteKind $kind, Node $node, bool $literalKey = false): StateWrite
     {
         $location = AstHelper::location($node, $this->file);
         $scope = $this->currentFunction();
@@ -519,6 +539,7 @@ final class IndexCollectingVisitor extends NodeVisitorAbstract
             $methodName,
             $methodName !== null && strtolower($methodName) === '__construct',
             $methodName !== null && NameHeuristics::looksLikeReset($methodName),
+            $literalKey,
         );
     }
 
@@ -633,6 +654,7 @@ final class IndexCollectingVisitor extends NodeVisitorAbstract
                 $local['location'],
                 $local['snippet'],
                 $local['writes'],
+                $local['excerpt'],
             ));
         }
 

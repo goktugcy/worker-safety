@@ -128,6 +128,9 @@ final class ScanService
                 static fn (string $path): string => Paths::makeRelative($path, $projectRoot),
                 $paths,
             ),
+            PHP_VERSION,
+            \WorkerSafety\Application\ApplicationInfo::VERSION,
+            !$options->allowParseErrors && $configuration->failOnParseError,
         );
 
         return new ScanOutcome($report, $result->findings, $registry, $configuration);
@@ -220,6 +223,11 @@ final class ScanService
 
         if ($options->baselinePath !== null) {
             return Paths::makeAbsolute($options->baselinePath, $options->projectRoot);
+        }
+
+        // `baseline: false` in the configuration is an explicit opt-out.
+        if ($configuration->baselineDisabled) {
+            return null;
         }
 
         return $configuration->baseline;

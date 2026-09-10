@@ -7,6 +7,69 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed — release review
+
+Scan integrity:
+
+- An unreadable or vanished file is reported as an analysis failure instead of
+  being treated as a successfully analyzed empty file.
+- A scan that could not analyze a file now fails (exit `1`) rather than
+  reporting a clean result, and SARIF no longer sets `executionSuccessful: true`
+  for it. Opt out with `--allow-parse-errors` or `fail_on_parse_error: false`.
+  A syntax error php-parser recovers from does not count.
+- `baseline` refuses to record findings from an incomplete scan.
+- `baseline: false` in the configuration is honoured; it previously fell back to
+  loading the default baseline file.
+- Finding identity is derived from the whole reported construct, so changing a
+  multi-line argument no longer keeps a baselined fingerprint. Line movement
+  still does not change it.
+
+Rule accuracy:
+
+- `WS005`/`WS006`: a `scoped()` binding under a *different* key no longer hides
+  a real singleton — the container flushes scoped instances by abstract key.
+- `WS005`/`WS006`: container factories resolve to the type they *return*, not to
+  the first object they allocate; ambiguous factories are skipped.
+- `WS005`/`WS006`: free-form service ids (`'auth.context'`) and already-built
+  instances (`instance('ctx', new Ctx())`) are recognised as bindings.
+- `WS005`/`WS006`: a fully qualified class name that is not declared in the
+  analyzed paths no longer falls back to an unrelated local short-name match.
+- `readonly class` marks every property, promoted or not, as immutable.
+- `WS008`: `array_slice()` is no longer treated as a release path (it copies);
+  a bound in one method no longer covers growth in another; release paths are
+  matched by class *and* method; a literal array key bounds the collection.
+- `WS008`: `unset($static[$key])` inside a function-scoped static stays a
+  clearing write.
+- `WS003`: aliased imports (`use function putenv as changeEnv`) are resolved;
+  `setlocale($category, 0)` is recognised as a query, not a mutation.
+- `WS009`: only static registries are reported; an instance property on an
+  object created per request is not assumed to outlive the request.
+
+Accuracy of what the tool claims:
+
+- Remediation no longer suggests `octane.flush` for static state: it calls
+  `forgetInstance()` on container bindings and never touches a static property.
+- `WS002`/`WS003` no longer claim cross-request persistence for superglobals the
+  runtimes rebuild. FrankenPHP documents `$_GET`, `$_POST`, `$_COOKIE`,
+  `$_FILES`, `$_SERVER` and `$_REQUEST` as reset and `$_ENV` as the exception,
+  so `$_SERVER` writes drop to `LOW`, request-superglobal writes drop to `LOW`,
+  and `$_ENV` stays `HIGH`.
+- The PHP-FPM lifecycle is described accurately: the engine ends the request
+  context, the OS worker process is reused.
+
+Repository:
+
+- SARIF artifact and base URIs are percent-encoded, so a path containing a
+  space or `#` is a valid URI.
+- The committed lock resolves against the minimum supported PHP (8.2) via
+  `config.platform`, so the CI jobs pinned to 8.2/8.3 can install from it.
+- The consumer workflow templates moved to `examples/workflows/`; as active
+  workflows in this repository they invoked a `vendor/bin/worker-safety` that
+  does not exist here.
+- PHP-CS-Fixer runs sequentially, so `composer lint` does not depend on being
+  able to bind a local TCP socket.
+
+
 ## [0.1.0] - 2026-09-10
 
 First release.

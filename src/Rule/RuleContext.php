@@ -68,4 +68,12 @@ final class RuleContext implements ReportingContext
     {
         return $this->file->snippet($at instanceof Node ? max(1, $at->getStartLine()) : $at);
     }
+
+    /**
+     * Whitespace-normalized source of the whole node, used as finding identity.
+     */
+    public function excerpt(Node $node): ?string
+    {
+        return $this->file->excerpt(max(1, $node->getStartLine()), max(1, $node->getEndLine()));
+    }
 }

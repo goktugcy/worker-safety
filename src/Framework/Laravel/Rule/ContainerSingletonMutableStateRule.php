@@ -84,6 +84,8 @@ final class ContainerSingletonMutableStateRule extends AbstractRule
                 $inspection->mutableProperties[0]->name ?? null,
             ),
             $binding->snippet,
+            null,
+            $binding->excerpt,
         );
     }
 

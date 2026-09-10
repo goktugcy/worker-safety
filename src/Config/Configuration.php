@@ -48,6 +48,8 @@ final class Configuration
         public readonly ?string $baseline = null,
         public readonly array $ignore = [],
         public readonly ?string $sourcePath = null,
+        public readonly bool $failOnParseError = true,
+        public readonly bool $baselineDisabled = false,
     ) {
     }
 
@@ -142,6 +144,8 @@ final class Configuration
             $this->baseline,
             $this->ignore,
             $this->sourcePath,
+            $this->failOnParseError,
+            $this->baselineDisabled,
         );
     }
 
@@ -157,6 +161,8 @@ final class Configuration
             $baseline,
             $this->ignore,
             $this->sourcePath,
+            $this->failOnParseError,
+            $this->baselineDisabled,
         );
     }
 
@@ -172,6 +178,8 @@ final class Configuration
             $this->baseline,
             $this->ignore,
             $sourcePath,
+            $this->failOnParseError,
+            $this->baselineDisabled,
         );
     }
 
@@ -196,6 +204,8 @@ final class Configuration
             $this->baseline,
             $this->ignore,
             $this->sourcePath,
+            $this->failOnParseError,
+            $this->baselineDisabled,
         );
     }
 }

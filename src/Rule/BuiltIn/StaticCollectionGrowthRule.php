@@ -41,7 +41,7 @@ final class StaticCollectionGrowthRule extends AbstractRule
             RuleCategory::MemoryRetention,
             [
                 'Bound the collection: cap its size, or key it so that entries are reused instead of added.',
-                'Clear it at the end of every request (Laravel Octane: a RequestTerminated listener or `octane.flush`).',
+                'Clear it at the end of every request. Under Laravel Octane that means a RequestTerminated listener that calls your reset: `octane.flush` only forgets container bindings, it does not empty static properties.',
                 'Move the cache into a real cache backend with a TTL, so eviction is somebody else\'s problem.',
             ],
             RuntimeTargetSet::all(),
@@ -94,6 +94,8 @@ final class StaticCollectionGrowthRule extends AbstractRule
             $severity,
             new SymbolContext($class->name, null, $property->name),
             $property->snippet,
+            null,
+            $property->excerpt,
         );
     }
 
@@ -124,6 +126,8 @@ final class StaticCollectionGrowthRule extends AbstractRule
             $severity,
             new SymbolContext($local->inClass, $local->inFunction, null, $local->name),
             $local->snippet,
+            null,
+            $local->excerpt,
         );
     }
 
@@ -134,7 +138,9 @@ final class StaticCollectionGrowthRule extends AbstractRule
      */
     private function judge(array $writes): ?array
     {
-        $growth = array_values(array_filter($writes, static fn (StateWrite $w): bool => $w->isGrowth()));
+        // A keyed write with a literal key targets a fixed slot, so it cannot
+        // grow the collection without bound.
+        $growth = array_values(array_filter($writes, static fn (StateWrite $w): bool => $w->growsUnbounded()));
 
         if ($growth === []) {
             return null;
@@ -146,23 +152,42 @@ final class StaticCollectionGrowthRule extends AbstractRule
             return [Severity::High, $growth[0]];
         }
 
-        // A clear that happens in the very method that grows the collection is
-        // a size bound (LRU eviction, per-call reset) rather than a leak.
-        $growthMethods = [];
-
-        foreach ($growth as $write) {
-            if ($write->inMethod !== null) {
-                $growthMethods[] = strtolower($write->inMethod);
-            }
-        }
+        // A clear in the very function that grows the collection is a size
+        // bound (LRU eviction, per-call reset). It only bounds *that* function:
+        // another function appending to the same property is still unbounded.
+        $boundedScopes = [];
 
         foreach ($clearing as $write) {
-            if ($write->inMethod !== null && in_array(strtolower($write->inMethod), $growthMethods, true)) {
-                return null;
+            $boundedScopes[self::scopeOf($write)] = true;
+        }
+
+        $unbounded = array_values(array_filter(
+            $growth,
+            static fn (StateWrite $w): bool => !isset($boundedScopes[self::scopeOf($w)]),
+        ));
+
+        if ($unbounded === []) {
+            return null;
+        }
+
+        // An explicit reset method is a release path someone has to call;
+        // an incidental clear elsewhere is not one at all.
+        foreach ($clearing as $write) {
+            if ($write->inResetMethod) {
+                return [Severity::Medium, $unbounded[0]];
             }
         }
 
-        return [Severity::Medium, $growth[0]];
+        return [Severity::High, $unbounded[0]];
+    }
+
+    /**
+     * Identity of the function a write happens in, qualified by its class so
+     * that two same-named methods on different classes never cancel out.
+     */
+    private static function scopeOf(StateWrite $write): string
+    {
+        return strtolower(($write->inClass ?? '') . '::' . ($write->inMethod ?? '{file}'));
     }
 
     /**

@@ -112,11 +112,13 @@ final class LaravelContainerBindingCollector implements ContainerBindingCollecto
             return null;
         }
 
-        $abstract = AstHelper::classNameFromExpr($abstractArg, $context->currentClass, $context->parentClass);
+        $key = AstHelper::containerKeyFromExpr($abstractArg, $context->currentClass, $context->parentClass);
 
-        if ($abstract === null) {
+        if ($key === null) {
             return null;
         }
+
+        [$abstract, $abstractIsClass] = $key;
 
         $concreteArg = $this->argument($args, 1, 'concrete');
         $concrete = $concreteArg === null ? null : $this->resolveConcrete($concreteArg, $context);
@@ -139,6 +141,8 @@ final class LaravelContainerBindingCollector implements ContainerBindingCollecto
             $context->file->snippet($location->line),
             $context->currentClass,
             $context->currentMethod,
+            $abstractIsClass,
+            $context->file->excerpt($location->line, $location->endLine),
         );
     }
 
@@ -146,6 +150,11 @@ final class LaravelContainerBindingCollector implements ContainerBindingCollecto
     {
         if ($expr instanceof Expr\Closure || $expr instanceof Expr\ArrowFunction) {
             return FirstInstantiationFinder::find($expr, $context->currentClass, $context->parentClass);
+        }
+
+        // `instance('ctx', new Context())` hands the container a built object.
+        if ($expr instanceof Expr\New_ && $expr->class instanceof Node\Name) {
+            return AstHelper::resolveClassReference($expr->class, $context->currentClass, $context->parentClass);
         }
 
         return AstHelper::classNameFromExpr($expr, $context->currentClass, $context->parentClass);

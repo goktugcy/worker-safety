@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace WorkerSafety\Analyzer;
 
 use WorkerSafety\Ast\Index\ProjectIndex;
+use WorkerSafety\Ast\ParseFailure;
 use WorkerSafety\Finding\Finding;
 use WorkerSafety\Finding\FindingCollection;
 use WorkerSafety\Ignore\FindingSuppressor;
@@ -36,7 +37,7 @@ final class ProjectAnalyzer implements Analyzer
 
         /** @var list<Finding> $findings */
         $findings = [];
-        /** @var list<\WorkerSafety\Ast\ParseFailure> $parseFailures */
+        /** @var list<ParseFailure> $parseFailures */
         $parseFailures = [];
 
         $total = count($request->files);
@@ -51,7 +52,23 @@ final class ProjectAnalyzer implements Analyzer
                 $onFile($position, $total, $relative);
             }
 
-            $file = new SourceFile($path, $relative, $this->read($path));
+            $source = $this->read($path);
+
+            if ($source === null) {
+                // Treating an unreadable file as an empty one would report a
+                // clean scan for code nobody looked at.
+                $parseFailures[] = new ParseFailure(
+                    $relative,
+                    $path,
+                    1,
+                    'File could not be read (check permissions, or it was removed during the scan).',
+                    true,
+                );
+
+                continue;
+            }
+
+            $file = new SourceFile($path, $relative, $source);
             $result = $this->fileAnalyzer->analyze($file, $request->rules, $project, $request->bindingCollectors);
 
             foreach ($result->parseFailures as $failure) {
@@ -103,10 +120,17 @@ final class ProjectAnalyzer implements Analyzer
         );
     }
 
-    private function read(string $path): string
+    /**
+     * File contents, or null when the file cannot be read.
+     */
+    private function read(string $path): ?string
     {
+        if (!is_file($path) || !is_readable($path)) {
+            return null;
+        }
+
         $source = @file_get_contents($path);
 
-        return $source === false ? '' : $source;
+        return $source === false ? null : $source;
     }
 }

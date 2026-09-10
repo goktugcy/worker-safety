@@ -30,7 +30,7 @@ final class FunctionScope
     /**
      * Static locals declared directly in this scope.
      *
-     * @var array<string, array{location: Location, snippet: string|null, default: DefaultValueKind, writes: list<StateWrite>}>
+     * @var array<string, array{location: Location, snippet: string|null, default: DefaultValueKind, writes: list<StateWrite>, excerpt: string|null}>
      */
     public array $staticLocals = [];
 
@@ -67,13 +67,19 @@ final class FunctionScope
         $target->instantiatesSelf = true;
     }
 
-    public function declareStaticLocal(string $name, Location $location, ?string $snippet, DefaultValueKind $default): void
-    {
+    public function declareStaticLocal(
+        string $name,
+        Location $location,
+        ?string $snippet,
+        DefaultValueKind $default,
+        ?string $excerpt = null,
+    ): void {
         $this->staticLocals[$name] = [
             'location' => $location,
             'snippet' => $snippet,
             'default' => $default,
             'writes' => [],
+            'excerpt' => $excerpt,
         ];
     }
 

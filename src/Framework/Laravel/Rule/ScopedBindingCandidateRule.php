@@ -80,6 +80,8 @@ final class ScopedBindingCandidateRule extends AbstractRule
             Severity::Medium,
             new SymbolContext($class->name, $binding->inMethod),
             $binding->snippet,
+            null,
+            $binding->excerpt,
         );
     }
 }

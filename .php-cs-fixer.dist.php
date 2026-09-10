@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 use PhpCsFixer\Config;
 use PhpCsFixer\Finder;
+use PhpCsFixer\Runner\Parallel\ParallelConfigFactory;
 
 $finder = Finder::create()
     ->in([__DIR__ . '/src', __DIR__ . '/tests'])
@@ -14,6 +15,10 @@ $finder = Finder::create()
 
 return (new Config())
     ->setFinder($finder)
+    // The parallel runner needs to bind a local TCP socket, which some CI
+    // sandboxes refuse. This codebase lints in under two seconds sequentially,
+    // so determinism is worth more than the parallelism.
+    ->setParallelConfig(ParallelConfigFactory::sequential())
     ->setRiskyAllowed(true)
     ->setRules([
         '@PSR12' => true,

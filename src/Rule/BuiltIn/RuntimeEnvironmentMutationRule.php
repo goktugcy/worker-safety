@@ -50,8 +50,12 @@ final class RuntimeEnvironmentMutationRule extends AbstractRule
      * @var array<string, Severity>
      */
     private const MUTABLE_SUPERGLOBALS = [
+        // $_ENV is documented as NOT reset between requests in FrankenPHP
+        // worker mode, so a write to it really does survive.
         '_ENV' => Severity::High,
-        '_SERVER' => Severity::Medium,
+        // $_SERVER is rebuilt per request by the supported runtimes, so a write
+        // is a within-request concern rather than a retained value.
+        '_SERVER' => Severity::Low,
     ];
 
     public function definition(): RuleDefinition
@@ -130,6 +134,10 @@ final class RuntimeEnvironmentMutationRule extends AbstractRule
             return null;
         }
 
+        if ($name === 'setlocale' && $this->isLocaleQuery($node)) {
+            return null;
+        }
+
         return $this->finding(
             $context,
             $context->location($node),
@@ -138,7 +146,34 @@ final class RuntimeEnvironmentMutationRule extends AbstractRule
             $this->adjust($severity, $context),
             $context->scope()->symbol(),
             $context->snippet($node),
+            null,
+            $context->excerpt($node),
         );
+    }
+
+    /**
+     * `setlocale($category, 0)` and `setlocale($category, "0")` return the
+     * current locale without changing anything.
+     */
+    private function isLocaleQuery(Expr\FuncCall $node): bool
+    {
+        $second = $node->args[1] ?? null;
+
+        if (!$second instanceof Node\Arg) {
+            return false;
+        }
+
+        $value = $second->value;
+
+        if ($value instanceof Node\Scalar\Int_) {
+            return $value->value === 0;
+        }
+
+        if ($value instanceof Node\Scalar\String_) {
+            return $value->value === '0';
+        }
+
+        return AstHelper::isNullConstant($value);
     }
 
     private function inspectTarget(Expr $target, Node $node, RuleContext $context, bool $isUnset): ?Finding
@@ -169,10 +204,12 @@ final class RuntimeEnvironmentMutationRule extends AbstractRule
             $isUnset
                 ? sprintf('%s is removed at runtime.', $reference)
                 : sprintf('%s is assigned at runtime.', $reference),
-            sprintf(
-                '$%s is built once per worker process and is not rebuilt from scratch for every request under a persistent runtime. A value written here stays visible to later requests, and configuration readers such as env() will keep returning it.',
-                $base->name,
-            ),
+            $base->name === '_ENV'
+                ? '$_ENV is the documented exception to superglobal resetting in FrankenPHP worker mode: it is not rebuilt between requests. A value written here stays visible to every later request the worker serves, and configuration readers such as env() will keep returning it.'
+                : sprintf(
+                    '$%s is rebuilt for every request by the supported runtimes, so the value does not persist the way a static property would. It is still reported because code downstream cannot tell an injected value from real request data, and because the same habit applied to $_ENV does leak across requests.',
+                    $base->name,
+                ),
             $this->adjust($severity, $context),
             new SymbolContext(
                 $context->scope()->className(),
@@ -181,6 +218,8 @@ final class RuntimeEnvironmentMutationRule extends AbstractRule
                 $base->name,
             ),
             $context->snippet($node),
+            null,
+            $context->excerpt($node),
         );
     }
 

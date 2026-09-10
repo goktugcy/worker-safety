@@ -19,7 +19,23 @@ final class StateWrite
         public readonly ?string $inMethod = null,
         public readonly bool $inConstructor = false,
         public readonly bool $inResetMethod = false,
+        public readonly bool $literalKey = false,
     ) {
+    }
+
+    /**
+     * True when the write can add an unpredictable number of entries.
+     *
+     * `self::$x['last'] = …` always targets the same slot, so it grows the
+     * array to a fixed size rather than without bound.
+     */
+    public function growsUnbounded(): bool
+    {
+        if (!$this->isGrowth()) {
+            return false;
+        }
+
+        return !($this->kind === WriteKind::KeyedWrite && $this->literalKey);
     }
 
     public function isClearing(): bool

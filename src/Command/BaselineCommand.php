@@ -15,6 +15,7 @@ use WorkerSafety\Application\ApplicationInfo;
 use WorkerSafety\Application\ExitCode;
 use WorkerSafety\Baseline\Baseline;
 use WorkerSafety\Baseline\BaselineRepository;
+use WorkerSafety\Exception\AnalysisException;
 use WorkerSafety\Runtime\RuntimeTargetSet;
 use WorkerSafety\Support\Paths;
 
@@ -43,6 +44,12 @@ final class BaselineCommand extends AbstractCommand
             ->addOption('project-dir', null, InputOption::VALUE_REQUIRED, 'Project root (defaults to the working directory)')
             ->addOption('runtime', 'r', InputOption::VALUE_REQUIRED | InputOption::VALUE_IS_ARRAY, 'Runtime target(s) to analyze for')
             ->addOption('baseline', null, InputOption::VALUE_REQUIRED, 'Where to write the baseline file')
+            ->addOption(
+                'allow-parse-errors',
+                null,
+                InputOption::VALUE_NONE,
+                'Write the baseline even though some files could not be analyzed',
+            )
             ->setHelp(sprintf(
                 'Runs a full scan and stores a fingerprint of every finding in %s. Existing findings then stop failing the build while new ones still do. Fingerprints do not include line numbers, so edits above a baselined finding do not resurrect it.',
                 ApplicationInfo::BASELINE_FILE,
@@ -61,7 +68,18 @@ final class BaselineCommand extends AbstractCommand
             $runtimeValues === [] ? null : RuntimeTargetSet::fromStrings($runtimeValues),
             'never',
             true,
+            null,
+            (bool) $input->getOption('allow-parse-errors'),
         ));
+
+        if ($outcome->report->isIncomplete() && !(bool) $input->getOption('allow-parse-errors')) {
+            throw new AnalysisException(sprintf(
+                'Refusing to write a baseline from an incomplete scan: %d file(s) could not be analyzed (%s). '
+                . 'Fix them, or pass --allow-parse-errors to accept the gap.',
+                $outcome->report->unanalyzedFileCount(),
+                implode(', ', array_slice($outcome->report->unanalyzedFiles(), 0, 3)),
+            ));
+        }
 
         $path = Paths::makeAbsolute(
             $this->stringOption($input, 'baseline')

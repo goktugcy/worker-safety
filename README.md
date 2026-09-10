@@ -13,9 +13,10 @@ Static analysis for PHP applications running on persistent workers.
 
 ## The problem
 
-Under PHP-FPM, every request gets a fresh process. Anything you leave in a static
-property, a global, or a singleton disappears when the request ends, so this is
-harmless:
+Under PHP-FPM, every request gets a fresh PHP context. The OS worker process is
+reused, but the engine tears the request down afterwards, so anything you left in
+a static property, a global or a singleton is gone by the next request. This is
+therefore harmless:
 
 ```php
 final class UserContext
@@ -202,6 +203,9 @@ worker-safety scan [paths...] [options]
       --no-baseline       Ignore an existing baseline file.
       --generate-baseline Write current findings to the baseline and exit 0.
       --no-progress       Do not render a progress bar.
+      --allow-parse-errors
+                          Report unanalyzable files as warnings instead of
+                          failing the scan.
       --no-ansi           Disable colour.
   -q, --quiet             Suppress output; rely on the exit code.
   -v                      Also print stack traces for internal errors.
@@ -227,11 +231,17 @@ Records every current finding so that only new ones fail the build. See
 | Code | Meaning |
 | --- | --- |
 | `0` | Scan completed; nothing reached the failure threshold. |
-| `1` | Findings reached the `--fail-on` threshold. |
+| `1` | Findings reached the `--fail-on` threshold, **or** a file could not be analyzed. |
 | `2` | Invalid configuration or CLI option. Nothing was analyzed. |
 | `3` | Internal error, including a path that does not exist. |
 
 `--fail-on=never` reports findings but always exits `0`.
+
+A file that could not be parsed or read at all is not a finding — it is a gap in
+the evidence, so it fails the scan on its own. The console output says which
+files and why. Pass `--allow-parse-errors` (or set `fail_on_parse_error: false`)
+to downgrade that to a warning; a syntax error php-parser can recover from never
+counts, because the file was still analyzed.
 
 ## Configuration
 
@@ -268,6 +278,9 @@ ignore:
     - app/Legacy
 
 fail_on: high
+
+# Fail the scan when a file cannot be analyzed at all (default: true).
+fail_on_parse_error: true
 
 baseline: worker-safety-baseline.json
 ```
@@ -347,8 +360,12 @@ vendor/bin/worker-safety scan --generate-baseline   # same as `baseline`
 ```
 
 Baseline entries are fingerprinted from the rule, the file, the symbol and the
-code — **not** the line number. Inserting lines above a baselined finding does
-not resurrect it; changing the code does.
+whole reported construct — **not** the line number. Inserting lines above a
+baselined finding does not resurrect it; changing the code does, including a
+change on a continuation line of a multi-line statement.
+
+A baseline is never written from an incomplete scan: if a file could not be
+analyzed, `baseline` refuses rather than recording a gap as accepted.
 
 ## GitHub Actions
 
@@ -420,7 +437,10 @@ jobs:
           category: worker-safety
 ```
 
-Both workflows are in [.github/workflows/](.github/workflows/).
+Both are ready to copy from [examples/workflows/](examples/workflows/). They live
+there rather than in this repository's own `.github/workflows/` because they run
+`vendor/bin/worker-safety`, which exists only once the package is installed as a
+dependency.
 
 ## JSON output
 
@@ -495,8 +515,16 @@ shape, independently of the tool version.
 All four are analyzed by default. Selecting a subset narrows which rules run and
 which runtimes each finding lists, and when exactly one runtime is selected the
 console report adds that runtime's specific caveat — for example, that Octane
-resets container state between requests but never your own statics unless you
-list them in `octane.flush`.
+resets container state between requests but never your own statics. Note that
+`octane.flush` does **not** help there: it calls `forgetInstance()` on the
+container bindings you list and never touches a static property, so a static
+needs an explicit reset from a `RequestReceived` or `RequestTerminated`
+listener.
+
+Superglobals differ per runtime too. FrankenPHP worker mode resets `$_GET`,
+`$_POST`, `$_COOKIE`, `$_FILES`, `$_SERVER` and `$_REQUEST` between requests and
+documents `$_ENV` as the exception, which is why WS003 rates a `$_ENV` write
+above a `$_SERVER` one.
 
 ## Supported frameworks
 
@@ -544,8 +572,13 @@ otherwise. Out of scope for v1:
 - **C extension memory leaks** and leaks inside the runtime itself.
 - **Complex data flow.** A value that reaches a static property through several
   function calls, an array, or a closure captured elsewhere may be missed.
-- **Inherited properties.** A static property declared in a parent class is
-  analyzed where it is declared, not once per subclass.
+- **Inherited and trait-provided members.** A static property declared in a
+  parent class or a trait is analyzed where it is declared, not once per
+  using class, so inherited instance state can be missed by the container rules.
+- **A user function that shadows a built-in.** A namespaced `function putenv()`
+  called unqualified cannot be told apart from the global one, so WS003 may
+  report it. Aliased imports (`use function putenv as changeEnv`) *are*
+  resolved correctly.
 - **Container bindings whose class is not in the scanned paths** are skipped
   rather than guessed at.
 - **Bindings and listeners registered dynamically**, from a config array or a
