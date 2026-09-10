@@ -240,8 +240,14 @@ Records every current finding so that only new ones fail the build. See
 A file that could not be parsed or read at all is not a finding — it is a gap in
 the evidence, so it fails the scan on its own. The console output says which
 files and why. Pass `--allow-parse-errors` (or set `fail_on_parse_error: false`)
-to downgrade that to a warning; a syntax error php-parser can recover from never
-counts, because the file was still analyzed.
+to downgrade that to a warning.
+
+Be precise about what this means: a scan is *complete* when *no file was skipped
+entirely*, not when every file parsed without a single error. A syntax error
+php-parser recovers from leaves the scan complete, because the file was still
+analyzed — it is reported as a parse warning instead. Both counts are in the
+JSON report (`summary.parse_errors` and `summary.files_not_analyzed`), and
+`summary.incomplete` is the one that gates the build.
 
 ## Configuration
 
@@ -360,9 +366,14 @@ vendor/bin/worker-safety scan --generate-baseline   # same as `baseline`
 ```
 
 Baseline entries are fingerprinted from the rule, the file, the symbol and the
-whole reported construct — **not** the line number. Inserting lines above a
-baselined finding does not resurrect it; changing the code does, including a
-change on a continuation line of a multi-line statement.
+whole reported construct — **not** the line number, and with no length limit.
+The code component is taken from the token stream, so:
+
+- inserting lines above a baselined finding does not resurrect it, and neither
+  does re-indenting the file or adding a comment inside the construct;
+- changing the code does resurrect it, including a change on a continuation
+  line of a long multi-line statement, and including whitespace *inside* a
+  string literal or a heredoc, which is content rather than formatting.
 
 A baseline is never written from an incomplete scan: if a file could not be
 analyzed, `baseline` refuses rather than recording a gap as accepted.

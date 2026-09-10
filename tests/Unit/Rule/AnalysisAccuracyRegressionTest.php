@@ -172,4 +172,95 @@ final class AnalysisAccuracyRegressionTest extends TestCase
     {
         $this->assertNoFindings($this->builtIn('Regression/instance-registry.php'));
     }
+
+    /**
+     * @return list<string>
+     */
+    private function grownClasses(string $fixture): array
+    {
+        $classes = array_values(array_unique(array_map(
+            static fn (Finding $f): string => (string) $f->symbol->class,
+            self::findingsFor($this->builtIn($fixture), RuleId::STATIC_COLLECTION_GROWTH),
+        )));
+
+        sort($classes);
+
+        return array_map(
+            static fn (string $class): string => substr($class, (int) strrpos($class, '\\') + 1),
+            $classes,
+        );
+    }
+
+    public function test_a_fixed_outer_key_does_not_bound_a_nested_collection(): void
+    {
+        $classes = $this->grownClasses('Regression/nested-growth.php');
+
+        self::assertContains('NestedBucket', $classes, 'The nested [] append grows without bound.');
+        self::assertContains('NestedKeyed', $classes, 'The nested dynamic key grows without bound.');
+        self::assertNotContains('FixedPath', $classes, 'Every dimension is fixed, so this is one slot.');
+    }
+
+    public function test_a_nested_append_in_a_function_static_is_reported(): void
+    {
+        $result = $this->builtIn('Regression/nested-growth.php');
+
+        $finding = $this->assertHasFinding($result, RuleId::STATIC_COLLECTION_GROWTH, null, Severity::High);
+
+        self::assertContains(
+            'items',
+            array_map(
+                static fn (Finding $f): string => $f->symbol->property ?? (string) $f->symbol->variable,
+                self::findingsFor($result, RuleId::STATIC_COLLECTION_GROWTH),
+            ),
+        );
+        self::assertNotSame('', $finding->message);
+    }
+
+    /**
+     * A bound has to be provable. Counting appends against removals is only
+     * sound when each one is guaranteed to run exactly once.
+     */
+    public function test_only_a_provable_bound_silences_the_growth_warning(): void
+    {
+        self::assertSame(
+            ['ConditionalRemoval', 'GrowthInLoop', 'NetGrowth', 'RemovalAfterEarlyReturn'],
+            $this->grownClasses('Regression/growth-bounds.php'),
+        );
+    }
+
+    public function test_a_size_guarded_eviction_is_a_bound(): void
+    {
+        self::assertNotContains('SizeGuarded', $this->grownClasses('Regression/growth-bounds.php'));
+    }
+
+    public function test_an_unconditional_full_reset_is_a_bound(): void
+    {
+        self::assertNotContains('FullReset', $this->grownClasses('Regression/growth-bounds.php'));
+    }
+
+    public function test_an_unconditional_add_and_remove_pair_is_a_bound(): void
+    {
+        self::assertNotContains('AddThenRemove', $this->grownClasses('Regression/growth-bounds.php'));
+    }
+
+    public function test_container_keys_are_matched_byte_for_byte(): void
+    {
+        $reported = array_map(
+            static fn (Finding $f): string => trim((string) $f->snippet),
+            self::findingsFor($this->laravel('Regression/container-key-identity.php'), RuleId::LARAVEL_SINGLETON_MUTABLE_STATE),
+        );
+
+        self::assertContains(
+            "\$app->singleton('Shared', CaseSensitiveState::class);",
+            $reported,
+            "A scoped 'shared' does not flush a singleton 'Shared'.",
+        );
+    }
+
+    public function test_a_scoped_alias_flushes_the_binding_it_aliases(): void
+    {
+        foreach ($this->laravel('Regression/container-key-identity.php')->findings as $finding) {
+            self::assertStringNotContainsString('AliasedState', $finding->message);
+        }
+    }
 }

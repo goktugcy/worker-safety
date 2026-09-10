@@ -74,6 +74,6 @@ final class RuleContext implements ReportingContext
      */
     public function excerpt(Node $node): ?string
     {
-        return $this->file->excerpt(max(1, $node->getStartLine()), max(1, $node->getEndLine()));
+        return $this->file->identitySource($node->getStartFilePos(), $node->getEndFilePos());
     }
 }

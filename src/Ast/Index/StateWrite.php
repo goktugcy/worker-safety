@@ -20,6 +20,9 @@ final class StateWrite
         public readonly bool $inConstructor = false,
         public readonly bool $inResetMethod = false,
         public readonly bool $literalKey = false,
+        public readonly bool $inLoop = false,
+        public readonly bool $guaranteed = true,
+        public readonly bool $sizeGuarded = false,
     ) {
     }
 

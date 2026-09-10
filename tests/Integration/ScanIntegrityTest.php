@@ -248,6 +248,71 @@ final class ScanIntegrityTest extends TestCase
     }
 
     /**
+     * Fingerprint of the single finding produced by the given source.
+     */
+    private function fingerprintOf(string $source): string
+    {
+        $this->write('src/Env.php', $source);
+
+        $findings = $this->scan()->findings->toArray();
+
+        self::assertCount(1, $findings, 'Expected exactly one finding to fingerprint.');
+
+        return $findings[0]->fingerprint();
+    }
+
+    /**
+     * The identity used to be capped at the first 20 lines, so a construct
+     * longer than that could change without changing its fingerprint.
+     */
+    public function test_identity_covers_a_construct_longer_than_twenty_lines(): void
+    {
+        $template = "<?php\nfunction run(): void { putenv(" . str_repeat("\n", 22) . "    '%s'\n); }\n";
+
+        $first = $this->fingerprintOf(sprintf($template, 'TOKEN=a'));
+        $second = $this->fingerprintOf(sprintf($template, 'OTHER=b'));
+        $again = $this->fingerprintOf(sprintf($template, 'TOKEN=a'));
+
+        self::assertNotSame($first, $second, 'A 23-line construct must not truncate out of its own identity.');
+        self::assertSame($first, $again, 'The identity has to be stable for identical code.');
+    }
+
+    public function test_identity_preserves_whitespace_inside_a_string_literal(): void
+    {
+        $wide = $this->fingerprintOf("<?php\nfunction run(): void { putenv(\"A=a  b\"); }\n");
+        $narrow = $this->fingerprintOf("<?php\nfunction run(): void { putenv(\"A=a b\"); }\n");
+
+        self::assertNotSame($wide, $narrow, 'Two spaces inside a literal are not one space.');
+    }
+
+    public function test_identity_preserves_heredoc_indentation(): void
+    {
+        $template = <<<'TEMPLATE'
+            <?php
+            function run(): void {
+                putenv(<<<TXT
+                    A=%s
+                    TXT);
+            }
+            TEMPLATE;
+
+        $indented = $this->fingerprintOf(sprintf($template, 'one') . "\n");
+        $other = $this->fingerprintOf(sprintf($template, 'two') . "\n");
+
+        self::assertNotSame($indented, $other);
+    }
+
+    public function test_identity_ignores_reindentation_and_comments(): void
+    {
+        $original = $this->fingerprintOf("<?php\nfunction run(): void { putenv(\"A=a  b\"); }\n");
+        $reindented = $this->fingerprintOf("<?php\nfunction run(): void {\n        putenv(\"A=a  b\");\n}\n");
+        $commented = $this->fingerprintOf("<?php\nfunction run(): void { /* why */ putenv(\"A=a  b\"); }\n");
+
+        self::assertSame($original, $reindented, 'Re-indenting a file must not invalidate a baseline.');
+        self::assertSame($original, $commented, 'Adding a comment must not invalidate a baseline.');
+    }
+
+    /**
      * @param array<string, mixed> $input
      */
     private function runCommand(string $command, array $input = []): CommandTester

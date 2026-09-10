@@ -86,9 +86,9 @@ final class Finding
      * above a finding do not resurrect it.
      *
      * The code component is the whole reported construct, not the single line
-     * shown in reports: two calls that differ only on a continuation line must
-     * not share an identity, or a baseline would accept the changed one
-     * without review.
+     * shown in reports and with no length limit: two calls that differ only on
+     * a continuation line must not share an identity, or a baseline would
+     * accept the changed one without review.
      */
     public function fingerprint(): string
     {
@@ -96,7 +96,9 @@ final class Finding
             $this->ruleId,
             $this->location->relativePath,
             $this->symbol->describe() ?? '',
-            self::normalizeSnippet($this->excerpt ?? $this->snippet ?? $this->message),
+            // The excerpt is already canonical; collapsing it again would
+            // erase whitespace that is meaningful inside a string literal.
+            $this->excerpt ?? self::normalizeSnippet($this->snippet ?? $this->message),
         ])), 0, 32);
     }
 

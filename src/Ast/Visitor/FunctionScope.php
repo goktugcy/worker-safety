@@ -28,6 +28,12 @@ final class FunctionScope
     public bool $instantiatesSelf = false;
 
     /**
+     * True once a return/throw/exit has been passed in this scope, after which
+     * no later statement is guaranteed to run.
+     */
+    public bool $sawEarlyExit = false;
+
+    /**
      * Static locals declared directly in this scope.
      *
      * @var array<string, array{location: Location, snippet: string|null, default: DefaultValueKind, writes: list<StateWrite>, excerpt: string|null}>

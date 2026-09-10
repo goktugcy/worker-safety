@@ -36,7 +36,7 @@ final class StaticCollectionGrowthRule extends AbstractRule
         return new RuleDefinition(
             RuleId::STATIC_COLLECTION_GROWTH,
             'Static collection growth',
-            'A static array that is appended to on every request never releases its entries. Under PHP-FPM the process exits and the memory goes away; under a persistent worker it accumulates until the worker is recycled or the memory limit is hit.',
+            'A static array that is appended to on every request never releases its entries. Under PHP-FPM the engine tears down the request context and the memory goes away; under a persistent worker the same context stays alive, so the array accumulates until the worker is recycled or the memory limit is hit.',
             Severity::Medium,
             RuleCategory::MemoryRetention,
             [
@@ -138,8 +138,8 @@ final class StaticCollectionGrowthRule extends AbstractRule
      */
     private function judge(array $writes): ?array
     {
-        // A keyed write with a literal key targets a fixed slot, so it cannot
-        // grow the collection without bound.
+        // A keyed write whose every dimension is a fixed key targets a fixed
+        // slot, so it cannot grow the collection without bound.
         $growth = array_values(array_filter($writes, static fn (StateWrite $w): bool => $w->growsUnbounded()));
 
         if ($growth === []) {
@@ -152,18 +152,9 @@ final class StaticCollectionGrowthRule extends AbstractRule
             return [Severity::High, $growth[0]];
         }
 
-        // A clear in the very function that grows the collection is a size
-        // bound (LRU eviction, per-call reset). It only bounds *that* function:
-        // another function appending to the same property is still unbounded.
-        $boundedScopes = [];
-
-        foreach ($clearing as $write) {
-            $boundedScopes[self::scopeOf($write)] = true;
-        }
-
         $unbounded = array_values(array_filter(
             $growth,
-            static fn (StateWrite $w): bool => !isset($boundedScopes[self::scopeOf($w)]),
+            fn (StateWrite $w): bool => !$this->scopeIsBounded(self::scopeOf($w), $growth, $clearing),
         ));
 
         if ($unbounded === []) {
@@ -179,6 +170,75 @@ final class StaticCollectionGrowthRule extends AbstractRule
         }
 
         return [Severity::High, $unbounded[0]];
+    }
+
+    /**
+     * Whether the growth in one function is provably bounded.
+     *
+     * Counting appends against removals is only sound when every one of them
+     * runs exactly once per call, so the bound has to be *proven*, not
+     * inferred. Three shapes qualify, and anything else keeps the warning:
+     *
+     *  1. an unconditional full reset (`self::$x = []`) — the collection
+     *     cannot carry anything over from an earlier call;
+     *  2. every growth and every removal guaranteed to run, with at least as
+     *     many removals as additions — net non-positive per call;
+     *  3. a single addition paired with a size-guarded eviction
+     *     (`if (count(self::$x) > N) array_shift(...)`) — the LRU idiom.
+     *
+     * A write inside a loop, behind a condition, or after an early return
+     * proves nothing, so none of the three can rely on it.
+     *
+     * @param list<StateWrite> $growth
+     * @param list<StateWrite> $clearing
+     */
+    private function scopeIsBounded(string $scope, array $growth, array $clearing): bool
+    {
+        $growthHere = array_values(array_filter(
+            $growth,
+            static fn (StateWrite $w): bool => self::scopeOf($w) === $scope,
+        ));
+        $clearingHere = array_values(array_filter(
+            $clearing,
+            static fn (StateWrite $w): bool => self::scopeOf($w) === $scope,
+        ));
+
+        if ($clearingHere === []) {
+            return false;
+        }
+
+        // (1) An unconditional full reset.
+        foreach ($clearingHere as $write) {
+            if ($write->kind->isFullRelease() && $write->guaranteed) {
+                return true;
+            }
+        }
+
+        // (2) Provably net non-positive: every write runs exactly once.
+        $allGuaranteed = true;
+
+        foreach ([...$growthHere, ...$clearingHere] as $write) {
+            if (!$write->guaranteed) {
+                $allGuaranteed = false;
+
+                break;
+            }
+        }
+
+        if ($allGuaranteed && count($clearingHere) >= count($growthHere)) {
+            return true;
+        }
+
+        // (3) One addition, evicted under a size check.
+        if (count($growthHere) === 1 && !$growthHere[0]->inLoop) {
+            foreach ($clearingHere as $write) {
+                if ($write->sizeGuarded) {
+                    return true;
+                }
+            }
+        }
+
+        return false;
     }
 
     /**

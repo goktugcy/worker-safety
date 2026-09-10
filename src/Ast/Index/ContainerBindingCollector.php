@@ -15,7 +15,9 @@ use PhpParser\Node;
 interface ContainerBindingCollector
 {
     /**
-     * @return iterable<ContainerBinding>
+     * Bindings and alias registrations discovered at this node.
+     *
+     * @return iterable<ContainerBinding|ContainerAlias>
      */
     public function collect(Node $node, BindingContext $context): iterable;
 }

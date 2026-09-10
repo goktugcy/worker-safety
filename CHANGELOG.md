@@ -7,6 +7,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed — second release review
+
+- `WS008`: a fixed outer key no longer bounds a nested collection.
+  `self::$items['bucket'][] = $x` grows without bound, and the whole dimension
+  chain is now checked — a key counts as fixed only when *every* dimension is a
+  compile-time constant. Applies to function-scoped statics too, where the case
+  previously produced no finding at all.
+- `WS008`: a bound must now be *proven*, not inferred from one removal being
+  present. Three shapes silence the rule — an unconditional full reset, a set of
+  additions and removals that are all guaranteed to run with at least as many
+  removals as additions, and a single addition paired with a size-guarded
+  eviction. Growth inside a loop, behind a condition, or after an early return
+  proves nothing and keeps the warning, so the +2/−1 net-growth case is reported.
+- `unset($static[$key])` is recorded as removing one entry, `unset($static)` as
+  removing all of them; the two are no longer conflated.
+- Finding identity has no length limit. It was capped at the first 20 lines, so
+  two calls differing only past that line shared a fingerprint and a baseline
+  accepted the changed one. The identity is now derived from the token stream:
+  whitespace *between* tokens collapses and comments are dropped (re-indenting
+  or annotating code keeps a baseline valid), while the text of string literals
+  and heredoc bodies is preserved byte for byte.
+- Laravel container keys are compared the way the container compares them —
+  byte for byte, after following `alias()` chains. A scoped `'shared'` no longer
+  suppresses a singleton `'Shared'`, and a scoped alias correctly suppresses the
+  binding it aliases. This key identity is deliberately separate from PHP
+  class-name identity, which stays case-insensitive.
+- `WS008`'s description no longer claims the PHP-FPM process exits; the
+  earlier lifecycle correction had not reached that string.
+
+Because the fingerprint algorithm changed, baselines generated before this
+change no longer match. Regenerate with `worker-safety baseline`.
+
 ### Fixed — release review
 
 Scan integrity:

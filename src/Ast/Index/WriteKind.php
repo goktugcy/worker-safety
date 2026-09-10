@@ -44,6 +44,15 @@ enum WriteKind: string
         return $this === self::Clear || $this === self::Unset || $this === self::Shrink;
     }
 
+    /**
+     * True when the operation empties the collection rather than removing one
+     * entry from it.
+     */
+    public function isFullRelease(): bool
+    {
+        return $this === self::Clear || $this === self::Unset;
+    }
+
     public function isGrowth(): bool
     {
         return $this === self::Append || $this === self::KeyedWrite || $this === self::Grow;

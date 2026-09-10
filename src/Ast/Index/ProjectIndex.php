@@ -30,6 +30,13 @@ final class ProjectIndex
     private array $bindings = [];
 
     /**
+     * Alias => abstract, exactly as the container stores it.
+     *
+     * @var array<string, string>
+     */
+    private array $aliases = [];
+
+    /**
      * @var array<string, list<StateWrite>> keyed by PropertyShape::makeWriteKey()
      */
     private array $staticWrites = [];
@@ -57,6 +64,31 @@ final class ProjectIndex
     public function addBinding(ContainerBinding $binding): void
     {
         $this->bindings[] = $binding;
+    }
+
+    public function addAlias(ContainerAlias $alias): void
+    {
+        $this->aliases[$alias->alias] = $alias->abstract;
+    }
+
+    /**
+     * Follow the alias chain the way Container::getAlias() does.
+     *
+     * Container keys are plain array keys: they are matched byte for byte, so
+     * `'Shared'` and `'shared'` are two different services. This is the key
+     * identity, deliberately distinct from PHP class-name identity, which is
+     * case-insensitive and used by {@see findClass()}.
+     */
+    public function resolveContainerKey(string $key): string
+    {
+        $seen = [];
+
+        while (isset($this->aliases[$key]) && !isset($seen[$key])) {
+            $seen[$key] = true;
+            $key = $this->aliases[$key];
+        }
+
+        return $key;
     }
 
     public function addStaticWrite(string $class, string $property, StateWrite $write): void

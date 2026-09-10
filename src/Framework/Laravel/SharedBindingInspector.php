@@ -90,11 +90,15 @@ final class SharedBindingInspector
     }
 
     /**
-     * The container flushes scoped instances by the abstract they are registered
-     * under, so only a scoped binding of *the same key* makes this one safe.
+     * The container flushes scoped instances by the abstract they are
+     * registered under, so only a scoped registration of *the same key* makes
+     * this binding safe.
      *
-     * `singleton('shared', Context::class)` stays a singleton no matter how many
-     * other keys resolve to the same concrete class.
+     * Keys are compared the way the container compares them — as plain array
+     * keys, byte for byte, after following any alias chain. `'Shared'` and
+     * `'shared'` are two different services, so a scoped `'shared'` does not
+     * flush a singleton `'Shared'`. This is deliberately not PHP class-name
+     * matching, which is case-insensitive; see ProjectIndex::findClass().
      */
     private function hasScopedBinding(ProjectIndex $index, ContainerBinding $binding): bool
     {
@@ -102,14 +106,14 @@ final class SharedBindingInspector
             return false;
         }
 
-        $needle = strtolower(ltrim($binding->abstract, '\\'));
+        $needle = $index->resolveContainerKey($binding->abstract);
 
         foreach ($index->bindings() as $other) {
             if (!$other->scoped || $other->abstract === null) {
                 continue;
             }
 
-            if (strtolower(ltrim($other->abstract, '\\')) === $needle) {
+            if ($index->resolveContainerKey($other->abstract) === $needle) {
                 return true;
             }
         }
