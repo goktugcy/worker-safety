@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed — sixth release review
+
+Two more ways a `WS008` finding could vanish entirely:
+
+- Sub-expressions that may never be evaluated are now treated as conditional:
+  the arguments of a nullsafe call (`$sink?->consume(self::$items = [])` skips
+  them when the receiver is null) and the right-hand side of `??=`. A reset
+  written in either position was being taken as an unconditional full reset.
+- `array_push(self::$items['bucket'], $v)` is growth again. The dimension path
+  was overwriting the function's effect with a keyed write, and the fixed outer
+  key then made it look bounded — but a constant key limits how many keys the
+  property has, not how large the array under one of them grows. The function
+  now decides the effect and the dimension only says which collection it lands
+  on.
+
 ### Fixed — fifth release review
 
 Four holes in the one remaining `WS008` exception, the unconditional full reset:

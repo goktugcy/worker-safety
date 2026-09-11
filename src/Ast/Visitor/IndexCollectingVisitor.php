@@ -238,7 +238,15 @@ final class IndexCollectingVisitor extends NodeVisitorAbstract
             || $node instanceof Expr\BinaryOp\BooleanOr
             || $node instanceof Expr\BinaryOp\LogicalAnd
             || $node instanceof Expr\BinaryOp\LogicalOr
-            || $node instanceof Expr\BinaryOp\Coalesce;
+            || $node instanceof Expr\BinaryOp\Coalesce
+            // `$sink?->consume(self::$x = [])` skips its arguments entirely
+            // when the receiver is null.
+            || $node instanceof Expr\NullsafeMethodCall
+            || $node instanceof Expr\NullsafePropertyFetch
+            // `$v ??= self::$x = []` only evaluates the right-hand side when
+            // the target is unset — which also makes the `??=` write itself
+            // conditional.
+            || $node instanceof Expr\AssignOp\Coalesce;
     }
 
     private function enterClassLike(Stmt\ClassLike $node): void
@@ -489,14 +497,16 @@ final class IndexCollectingVisitor extends NodeVisitorAbstract
             return;
         }
 
-        $this->recordWrite($first->value, $kind, $node);
+        // The function decides the effect; the dimension only says which
+        // collection it lands on.
+        $this->recordWrite($first->value, $kind, $node, true);
     }
 
     /**
      * Attribute a mutation to a static property, an instance property or a
      * static local variable.
      */
-    private function recordWrite(Expr $target, WriteKind $kind, Node $node): void
+    private function recordWrite(Expr $target, WriteKind $kind, Node $node, bool $kindIsEffect = false): void
     {
         $base = AstHelper::unwrapArrayDim($target);
         $dimension = $target instanceof Expr\ArrayDimFetch
@@ -507,13 +517,18 @@ final class IndexCollectingVisitor extends NodeVisitorAbstract
         // collection: `unset(self::$x[$k])` removes a single entry, and
         // `self::$x['last'] = []` assigns an empty array *into* a key, which
         // can even add one. Only a write to the property itself can clear it.
-        if ($dimension === null) {
+        //
+        // A call such as `array_push(self::$x['bucket'], $v)` is different: the
+        // function already states the effect, and the dimension only says which
+        // collection it applies to. The fixed outer key bounds how many keys
+        // `$x` has, not how large the array under `bucket` grows.
+        if ($dimension === null || $kindIsEffect) {
             $effective = $kind;
+            $literalKey = false;
         } else {
             $effective = $kind === WriteKind::Unset ? WriteKind::Shrink : $dimension['kind'];
+            $literalKey = $dimension['literalKey'];
         }
-
-        $literalKey = $dimension['literalKey'] ?? false;
 
         if ($base instanceof Expr\StaticPropertyFetch) {
             $this->recordStaticPropertyWrite($base, $effective, $node, $literalKey);

@@ -378,3 +378,57 @@ class RemovalDeclaredSecond
         array_pop(self::$items);
     }
 }
+
+final class ResetSink
+{
+    public function consume(mixed $value): void
+    {
+    }
+}
+
+/**
+ * A nullsafe call skips its arguments entirely when the receiver is null, so
+ * the reset written inside them may never run.
+ */
+class ResetInsideNullsafeArguments
+{
+    private static array $items = [];
+
+    public static ?ResetSink $sink = null;
+
+    public static function add(string $value): void
+    {
+        self::$items[] = $value;
+        self::$sink?->consume(self::$items = []);
+    }
+}
+
+/**
+ * The right-hand side of `??=` is only evaluated when the target is unset.
+ */
+class ResetInsideCoalesceAssignment
+{
+    private static array $items = [];
+
+    public static function add(string $value): void
+    {
+        self::$items[] = $value;
+
+        $seen = true;
+        $seen ??= self::$items = [];
+    }
+}
+
+/**
+ * A fixed outer key bounds how many keys the property has, not how large the
+ * array underneath it grows.
+ */
+class NestedPushUnderFixedKey
+{
+    public static array $items = ['bucket' => []];
+
+    public static function add(string $value): void
+    {
+        array_push(self::$items['bucket'], $value);
+    }
+}

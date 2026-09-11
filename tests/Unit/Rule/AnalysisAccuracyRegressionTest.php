@@ -244,6 +244,7 @@ final class AnalysisAccuracyRegressionTest extends TestCase
                 'GrowthInLoop',
                 'ImpossibleCountGuard',
                 'InfiniteLimit',
+                'NestedPushUnderFixedKey',
                 'NetGrowth',
                 'NullsOneKey',
                 'PushesTwoPopsOne',
@@ -253,6 +254,8 @@ final class AnalysisAccuracyRegressionTest extends TestCase
                 'RemovalDeclaredFirst',
                 'RemovalDeclaredSecond',
                 'ResetInsideAnUncalledClosure',
+                'ResetInsideCoalesceAssignment',
+                'ResetInsideNullsafeArguments',
                 'ResetSkippedByGoto',
                 'ShortCircuitRemoval',
                 'SizeGuarded',
@@ -306,6 +309,38 @@ final class AnalysisAccuracyRegressionTest extends TestCase
         self::assertSame(
             Severity::Medium,
             $this->severityOf('Regression/growth-bounds.php', 'ResetSkippedByGoto'),
+        );
+    }
+
+    /**
+     * A nullsafe call evaluates none of its arguments when the receiver is
+     * null, so a reset written there is not unconditional.
+     */
+    public function test_a_reset_inside_nullsafe_arguments_is_not_a_bound(): void
+    {
+        self::assertSame(
+            Severity::Medium,
+            $this->severityOf('Regression/growth-bounds.php', 'ResetInsideNullsafeArguments'),
+        );
+    }
+
+    public function test_a_reset_on_the_right_of_a_coalesce_assignment_is_not_a_bound(): void
+    {
+        self::assertSame(
+            Severity::Medium,
+            $this->severityOf('Regression/growth-bounds.php', 'ResetInsideCoalesceAssignment'),
+        );
+    }
+
+    /**
+     * `array_push(self::$x['bucket'], $v)` grows the nested array. The fixed
+     * outer key limits the number of keys, not the size of what is under one.
+     */
+    public function test_a_fixed_outer_key_does_not_bound_a_nested_push(): void
+    {
+        self::assertSame(
+            Severity::High,
+            $this->severityOf('Regression/growth-bounds.php', 'NestedPushUnderFixedKey'),
         );
     }
 
