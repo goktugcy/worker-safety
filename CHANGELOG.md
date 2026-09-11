@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-09-11
+
 Report wording and false-positive handling, from feedback on real Laravel use.
 No rule was made quieter: nothing that was reported before is suppressed or
 downgraded now.
@@ -437,6 +439,7 @@ Development version. Never tagged or published; its contents ship as part of
 - Documented CI exit codes: `0` pass, `1` findings above threshold,
   `2` invalid configuration, `3` internal error.
 
-[Unreleased]: https://github.com/goktugcy/worker-safety/compare/v1.0.1...HEAD
+[Unreleased]: https://github.com/goktugcy/worker-safety/compare/v1.1.0...HEAD
+[1.1.0]: https://github.com/goktugcy/worker-safety/compare/v1.0.1...v1.1.0
 [1.0.1]: https://github.com/goktugcy/worker-safety/compare/v1.0.0...v1.0.1
 [1.0.0]: https://github.com/goktugcy/worker-safety/releases/tag/v1.0.0
