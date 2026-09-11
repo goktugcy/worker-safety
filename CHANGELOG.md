@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed — seventh release review
+
+- `?->` short-circuits the whole chain, not just its own link. A reset written
+  further along one — `$sink?->next()->consume(self::$items = [])`, and the
+  property and array-dimension forms of the same shape — was still counted as
+  unconditional, because the conditional context closed when the nullsafe node
+  was left and the outer call is an ordinary `MethodCall`. The short-circuit is
+  now modelled along the receiver chain, so anything reachable only past a
+  nullsafe link is conditional. A chain with no nullsafe in it is unaffected and
+  still counts as an unconditional reset.
+
 ### Fixed — sixth release review
 
 Two more ways a `WS008` finding could vanish entirely:

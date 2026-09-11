@@ -256,6 +256,9 @@ final class AnalysisAccuracyRegressionTest extends TestCase
                 'ResetInsideAnUncalledClosure',
                 'ResetInsideCoalesceAssignment',
                 'ResetInsideNullsafeArguments',
+                'ResetPastANullsafeCall',
+                'ResetPastANullsafeDimension',
+                'ResetPastANullsafeProperty',
                 'ResetSkippedByGoto',
                 'ShortCircuitRemoval',
                 'SizeGuarded',
@@ -341,6 +344,39 @@ final class AnalysisAccuracyRegressionTest extends TestCase
         self::assertSame(
             Severity::High,
             $this->severityOf('Regression/growth-bounds.php', 'NestedPushUnderFixedKey'),
+        );
+    }
+
+    /**
+     * `?->` short-circuits the whole chain, not only its own link: when the
+     * receiver is null, a reset written further along it never runs.
+     */
+    public function test_a_reset_past_a_nullsafe_link_is_not_a_bound(): void
+    {
+        foreach (
+            [
+                'ResetPastANullsafeCall',
+                'ResetPastANullsafeProperty',
+                'ResetPastANullsafeDimension',
+            ] as $class
+        ) {
+            self::assertSame(
+                Severity::Medium,
+                $this->severityOf('Regression/growth-bounds.php', $class),
+                $class . ' must still be reported.',
+            );
+        }
+    }
+
+    /**
+     * The same chain without a nullsafe link really is unconditional, so the
+     * short-circuit handling must not start reporting it.
+     */
+    public function test_a_plain_chain_still_counts_as_an_unconditional_reset(): void
+    {
+        self::assertNotContains(
+            'ResetPastAPlainChain',
+            $this->grownClasses('Regression/growth-bounds.php'),
         );
     }
 

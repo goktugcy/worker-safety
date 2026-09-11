@@ -239,14 +239,42 @@ final class IndexCollectingVisitor extends NodeVisitorAbstract
             || $node instanceof Expr\BinaryOp\LogicalAnd
             || $node instanceof Expr\BinaryOp\LogicalOr
             || $node instanceof Expr\BinaryOp\Coalesce
-            // `$sink?->consume(self::$x = [])` skips its arguments entirely
-            // when the receiver is null.
-            || $node instanceof Expr\NullsafeMethodCall
-            || $node instanceof Expr\NullsafePropertyFetch
             // `$v ??= self::$x = []` only evaluates the right-hand side when
             // the target is unset — which also makes the `??=` write itself
             // conditional.
-            || $node instanceof Expr\AssignOp\Coalesce;
+            || $node instanceof Expr\AssignOp\Coalesce
+            // `$sink?->consume(self::$x = [])`, and everything further along
+            // the same chain.
+            || self::isShortCircuitedChain($node);
+    }
+
+    /**
+     * True for a node that a nullsafe operator can skip.
+     *
+     * `?->` short-circuits the *whole* chain, not just its own link: when
+     * `$sink` is null in `$sink?->next()->consume(self::$x = [])`, neither
+     * `consume()` nor its arguments are evaluated. So a call or fetch counts as
+     * conditional when any link in the receiver chain leading to it is
+     * nullsafe.
+     */
+    private static function isShortCircuitedChain(Node $node): bool
+    {
+        $current = $node;
+
+        while ($current !== null) {
+            if ($current instanceof Expr\NullsafeMethodCall || $current instanceof Expr\NullsafePropertyFetch) {
+                return true;
+            }
+
+            $current = match (true) {
+                $current instanceof Expr\MethodCall,
+                $current instanceof Expr\PropertyFetch,
+                $current instanceof Expr\ArrayDimFetch => $current->var,
+                default => null,
+            };
+        }
+
+        return false;
     }
 
     private function enterClassLike(Stmt\ClassLike $node): void

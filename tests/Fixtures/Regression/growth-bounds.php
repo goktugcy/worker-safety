@@ -432,3 +432,74 @@ class NestedPushUnderFixedKey
         array_push(self::$items['bucket'], $value);
     }
 }
+
+final class ResetChainLink
+{
+    public ?self $prop = null;
+
+    /**
+     * @var array<int, self|null>
+     */
+    public array $list = [];
+
+    public function next(): self
+    {
+        return $this;
+    }
+
+    public function consume(mixed $value): void
+    {
+    }
+}
+
+/**
+ * `?->` short-circuits the whole chain: when the receiver is null, neither the
+ * later call nor its arguments are evaluated.
+ */
+class ResetPastANullsafeCall
+{
+    private static array $items = [];
+
+    public static function add(string $value, ?ResetChainLink $sink = null): void
+    {
+        self::$items[] = $value;
+        $sink?->next()->consume(self::$items = []);
+    }
+}
+
+class ResetPastANullsafeProperty
+{
+    private static array $items = [];
+
+    public static function add(string $value, ?ResetChainLink $sink = null): void
+    {
+        self::$items[] = $value;
+        $sink?->prop->consume(self::$items = []);
+    }
+}
+
+class ResetPastANullsafeDimension
+{
+    private static array $items = [];
+
+    public static function add(string $value, ?ResetChainLink $sink = null): void
+    {
+        self::$items[] = $value;
+        $sink?->list[0]->consume(self::$items = []);
+    }
+}
+
+/**
+ * The same chain without a nullsafe link: the reset really is unconditional,
+ * so this one must stay silent.
+ */
+class ResetPastAPlainChain
+{
+    private static array $items = [];
+
+    public static function add(string $value, ResetChainLink $sink): void
+    {
+        self::$items[] = $value;
+        $sink->next()->consume(self::$items = []);
+    }
+}
