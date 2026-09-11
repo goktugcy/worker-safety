@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Allow `symfony/console` and `symfony/yaml` 8. `1.0.0` required `^6.4 || ^7.0`,
+  so `composer require` failed outright in any project that had already resolved
+  Symfony 8 — which includes every Laravel 13 application, because Laravel 13
+  requires `symfony/console` ^7.4 or ^8.0. The constraint is now
+  `^6.4 || ^7.0 || ^8.0`.
+
+  Nothing changes for projects on Symfony 6.4 or 7: Symfony 8 requires PHP 8.4,
+  so Composer will not select it on PHP 8.2 or 8.3, and the committed lock file
+  still resolves to Symfony 7.
+
+### Added
+
+- A CI job that installs Symfony 8 on PHP 8.4 and runs the suite against it, so
+  the compatibility claim is checked on every push rather than assumed. The
+  job has to drop `config.platform.php` first — that pin targets the lowest
+  supported PHP and would otherwise make the job silently re-test Symfony 7.
+- Laravel 13 to the verified support matrix: package discovery, all documented
+  options, JSON and SARIF output, the baseline round-trip and every exit code,
+  checked on PHP 8.5 with `symfony/console` 8.
+
 ## [1.0.0] - 2026-09-11
 
 First stable release, and the first release published at all: `0.1.0` below was

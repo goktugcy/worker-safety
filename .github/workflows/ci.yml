@@ -110,3 +110,49 @@ jobs:
           bin/worker-safety scan tests/Fixtures --fail-on=never --no-ansi > /dev/null
           bin/worker-safety scan tests/Fixtures --fail-on=never --format=json | php -r 'exit(json_decode(stream_get_contents(STDIN)) === null ? 1 : 0);'
           bin/worker-safety scan tests/Fixtures --fail-on=never --format=sarif | php -r 'exit(json_decode(stream_get_contents(STDIN)) === null ? 1 : 0);'
+
+  symfony-8:
+    name: Symfony 8 / PHP 8.4
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.4'
+          extensions: mbstring, json
+          coverage: none
+          tools: composer:v2
+
+      # `config.platform.php` pins resolution to 8.2 so that the committed lock
+      # matches the lowest supported PHP. Symfony 8 requires PHP >= 8.4, so with
+      # that pin in place it can never be selected and this job would silently
+      # test Symfony 7 again. Dropping the pin here is what makes the job real.
+      #
+      # Decoding without `assoc` keeps empty objects (`config.policy`) as
+      # objects; `composer config --unset` rewrites them as `[]` and then fails
+      # its own schema validation.
+      - name: Drop the platform pin so Symfony 8 is selectable
+        run: |
+          php -r '$f = "composer.json";
+            $d = json_decode(file_get_contents($f));
+            unset($d->config->platform);
+            file_put_contents($f, json_encode($d, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE) . "\n");'
+
+      - name: Install with Symfony 8
+        run: composer update --no-interaction --with="symfony/console:^8.0" --with="symfony/yaml:^8.0"
+
+      - name: Confirm Symfony 8 was actually installed
+        run: |
+          composer show symfony/console | grep -E '^versions.*\*? v8\.' \
+            || { echo 'symfony/console 8 was not installed'; composer show symfony/console; exit 1; }
+
+      - name: Run tests
+        run: composer test
+
+      - name: Smoke-test the binary
+        run: |
+          bin/worker-safety scan src --fail-on=medium --no-ansi
+          bin/worker-safety scan tests/Fixtures --fail-on=never --format=json | php -r 'exit(json_decode(stream_get_contents(STDIN)) === null ? 1 : 0);'
+          bin/worker-safety scan tests/Fixtures --fail-on=never --format=sarif | php -r 'exit(json_decode(stream_get_contents(STDIN)) === null ? 1 : 0);'

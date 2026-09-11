@@ -283,9 +283,10 @@ there is no provider to discover.
 
 | Version | Status |
 | --- | --- |
+| Laravel 13 | Verified: same checks, on PHP 8.5 with `symfony/console` 8. Laravel 13 requires `symfony/console` ^7.4 or ^8.0, which is why the package accepts Symfony 8. |
 | Laravel 12 | Verified: package discovery, all documented options, JSON and SARIF output, baseline round-trip and every exit code. |
 | Laravel 11 | Verified: same checks. On PHP 8.5 the framework itself emits deprecation notices during bootstrap that land on stdout, which will corrupt `--format=json` or `--format=sarif` output — that is Laravel 11 on PHP 8.5, not this package, and `php artisan list` does it too. PHP 8.2–8.4 is unaffected. |
-| Laravel 10 | Not verified. The package's constraints (PHP ^8.2, `symfony/console` ^6.4 or ^7.0) do not exclude it, but it has not been tested, so no support is claimed. |
+| Laravel 10 | Not verified. The package's constraints (PHP ^8.2, `symfony/console` ^6.4, ^7.0 or ^8.0) do not exclude it, but it has not been tested, so no support is claimed. |
 
 ### If package discovery is disabled
 
