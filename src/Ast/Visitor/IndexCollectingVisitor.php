@@ -199,8 +199,10 @@ final class IndexCollectingVisitor extends NodeVisitorAbstract
         }
 
         // Set on leave, so the returned expression itself still counts as
-        // reached while everything after it does not.
+        // reached while everything after it does not. `goto` belongs here too:
+        // it can jump over the statements that follow.
         if ($node instanceof Stmt\Return_
+            || $node instanceof Stmt\Goto_
             || $node instanceof Expr\Throw_
             || $node instanceof Expr\Exit_
         ) {
@@ -501,13 +503,14 @@ final class IndexCollectingVisitor extends NodeVisitorAbstract
             ? $this->dimensionWrite($target, $base)
             : null;
 
-        // A clearing operation stays clearing even when it targets a dimension,
-        // but `unset(self::$x[$k])` removes one entry while `unset(self::$x)`
-        // removes them all.
-        if ($kind === WriteKind::Unset) {
-            $effective = $dimension === null ? WriteKind::Unset : WriteKind::Shrink;
+        // A write through a dimension addresses one entry, never the whole
+        // collection: `unset(self::$x[$k])` removes a single entry, and
+        // `self::$x['last'] = []` assigns an empty array *into* a key, which
+        // can even add one. Only a write to the property itself can clear it.
+        if ($dimension === null) {
+            $effective = $kind;
         } else {
-            $effective = $kind->isClearing() ? $kind : ($dimension['kind'] ?? $kind);
+            $effective = $kind === WriteKind::Unset ? WriteKind::Shrink : $dimension['kind'];
         }
 
         $literalKey = $dimension['literalKey'] ?? false;
@@ -649,6 +652,12 @@ final class IndexCollectingVisitor extends NodeVisitorAbstract
         $methodScope = $scope instanceof FunctionScope ? ($scope->methodScope ?? $scope) : null;
         $methodName = $methodScope?->name;
 
+        // A write is attributed to the function it is *declared* in, but a
+        // closure body is not executed by that function — `$reset = function ()
+        // { self::$x = []; };` never runs on its own. Declaration scope is not
+        // execution scope, so nothing inside a closure is guaranteed.
+        $inClosure = $scope instanceof FunctionScope && $scope->name === null;
+
         return new StateWrite(
             $kind,
             $location,
@@ -658,7 +667,8 @@ final class IndexCollectingVisitor extends NodeVisitorAbstract
             $methodName !== null && strtolower($methodName) === '__construct',
             $methodName !== null && NameHeuristics::looksLikeReset($methodName),
             $literalKey,
-            $this->loopDepth === 0
+            !$inClosure
+                && $this->loopDepth === 0
                 && $this->conditionalDepth === 0
                 && !($scope instanceof FunctionScope && $scope->sawEarlyExit),
         );

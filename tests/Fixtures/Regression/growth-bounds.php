@@ -279,3 +279,102 @@ class ReassignedKey
         unset(self::$items[$key]);
     }
 }
+
+/**
+ * Assigning an empty array to a *key* does not clear the collection — it can
+ * even add one.
+ */
+class ClearsOneKey
+{
+    private static array $items = [];
+
+    public static function add(string $value): void
+    {
+        self::$items[] = $value;
+        self::$items['last'] = [];
+    }
+}
+
+class NullsOneKey
+{
+    private static array $items = [];
+
+    public static function add(string $value): void
+    {
+        self::$items[] = $value;
+        self::$items['last'] = null;
+    }
+}
+
+/**
+ * The reset is declared, never executed: a closure body is not run by the
+ * function that declares it.
+ */
+class ResetInsideAnUncalledClosure
+{
+    private static array $items = [];
+
+    public static function add(string $value): void
+    {
+        self::$items[] = $value;
+
+        $reset = function (): void {
+            self::$items = [];
+        };
+    }
+}
+
+/**
+ * The reset is jumped over.
+ */
+class ResetSkippedByGoto
+{
+    private static array $items = [];
+
+    public static function add(string $value): void
+    {
+        self::$items[] = $value;
+
+        goto done;
+
+        self::$items = [];
+
+        done:
+    }
+}
+
+/**
+ * Two methods, one of which never removes anything. The severity must not
+ * depend on which is declared first — see the pair below.
+ */
+class RemovalDeclaredFirst
+{
+    private static array $items = [];
+
+    public static function bounded(string $value): void
+    {
+        self::$items[] = $value;
+        array_pop(self::$items);
+    }
+
+    public static function unbounded(string $value): void
+    {
+        self::$items[] = $value;
+    }
+}
+
+class RemovalDeclaredSecond
+{
+    private static array $items = [];
+
+    public static function unbounded(string $value): void
+    {
+        self::$items[] = $value;
+    }
+
+    public static function bounded(string $value): void
+    {
+        self::$items[] = $value;
+        array_pop(self::$items);
+    }
+}

@@ -160,9 +160,9 @@ final class StaticCollectionGrowthRule extends AbstractRule
     /**
      * @param list<StateWrite> $writes
      *
-     * @return array{0: Severity, 1: StateWrite, 2: string}|null severity, first
-     *                                                           unbounded write,
-     *                                                           and why
+     * @return array{0: Severity, 1: StateWrite, 2: string}|null severity, the
+     *                                                           write it came
+     *                                                           from, and why
      */
     private function judge(array $writes): ?array
     {
@@ -189,22 +189,51 @@ final class StaticCollectionGrowthRule extends AbstractRule
             return null;
         }
 
-        // A removal in the growing function is evidence of intent, not a proof
-        // of a bound, so it lowers the severity rather than removing the
-        // finding. So does a reset method that something has to call.
+        // Every growing function is graded, and the worst one decides. Looking
+        // at only the first would make the severity — and the exit code —
+        // depend on the order the methods happen to be declared in.
+        $worst = null;
+
+        foreach ($unbounded as $write) {
+            $release = self::releaseKindFor($write, $clearing);
+            $severity = $release === 'none' ? Severity::High : Severity::Medium;
+
+            if ($worst === null || $severity->rank() > $worst[0]->rank()) {
+                $worst = [$severity, $write, $release];
+            }
+        }
+
+        return $worst;
+    }
+
+    /**
+     * What kind of release path, if any, covers the function this write is in.
+     *
+     * A removal in the growing function is evidence of intent, not a proof of a
+     * bound, so it lowers the severity rather than removing the finding. So
+     * does a reset method that something has to call.
+     *
+     * @param list<StateWrite> $clearing
+     *
+     * @return 'none'|'reset'|'unproven'
+     */
+    private static function releaseKindFor(StateWrite $growth, array $clearing): string
+    {
+        $scope = self::scopeOf($growth);
+
         foreach ($clearing as $write) {
-            if (self::scopeOf($write) === self::scopeOf($unbounded[0])) {
-                return [Severity::Medium, $unbounded[0], 'unproven'];
+            if (self::scopeOf($write) === $scope) {
+                return 'unproven';
             }
         }
 
         foreach ($clearing as $write) {
             if ($write->inResetMethod) {
-                return [Severity::Medium, $unbounded[0], 'reset'];
+                return 'reset';
             }
         }
 
-        return [Severity::High, $unbounded[0], 'none'];
+        return 'none';
     }
 
     /**

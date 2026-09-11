@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed — fifth release review
+
+Four holes in the one remaining `WS008` exception, the unconditional full reset:
+
+- A write through an array dimension is never a reset of the collection.
+  `self::$items['last'] = []` (and the `null` variant) assigns into a key and
+  can even add one; it was being classified as a full clear, which silenced the
+  finding entirely. Both are now `HIGH`.
+- A reset written inside a closure no longer counts for the function that
+  declares it. `$reset = function () { self::$items = []; };` is never executed
+  on its own — declaration scope is not execution scope, so nothing lexically
+  inside a closure is treated as guaranteed.
+- `goto` joins return/throw/exit as an early exit, so a reset that is jumped
+  over is no longer taken as unconditional.
+- Severity no longer depends on method declaration order. Every growing
+  function is graded and the worst one decides, so moving a method within its
+  class can no longer flip a finding between `MEDIUM` and `HIGH` — or the exit
+  code between 0 and 1.
+
 ### Changed — fourth release review
 
 `WS008` no longer claims bounds it cannot prove. Two suppression paths are gone

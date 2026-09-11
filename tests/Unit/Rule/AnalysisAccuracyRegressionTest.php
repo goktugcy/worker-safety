@@ -126,8 +126,11 @@ final class AnalysisAccuracyRegressionTest extends TestCase
     {
         $result = $this->builtIn('Regression/collection-bounds.php');
 
-        // Reported at the declaration; `unbounded()` appends with no eviction.
-        $this->assertHasFinding($result, RuleId::STATIC_COLLECTION_GROWTH, 22, Severity::Medium);
+        // Reported at the declaration. `bounded()` removes what it adds, but
+        // `unbounded()` has no removal at all, and the worst growing scope
+        // decides — so this is HIGH regardless of the order the methods are
+        // declared in.
+        $this->assertHasFinding($result, RuleId::STATIC_COLLECTION_GROWTH, 22, Severity::High);
     }
 
     public function test_a_literal_key_bounds_the_collection(): void
@@ -235,16 +238,22 @@ final class AnalysisAccuracyRegressionTest extends TestCase
         self::assertSame(
             [
                 'AddThenRemove',
+                'ClearsOneKey',
                 'ConditionalRemoval',
                 'EvictionBehindASecondCondition',
                 'GrowthInLoop',
                 'ImpossibleCountGuard',
                 'InfiniteLimit',
                 'NetGrowth',
+                'NullsOneKey',
                 'PushesTwoPopsOne',
                 'ReassignedKey',
                 'RemovalAfterEarlyReturn',
                 'RemovalBeforeAddition',
+                'RemovalDeclaredFirst',
+                'RemovalDeclaredSecond',
+                'ResetInsideAnUncalledClosure',
+                'ResetSkippedByGoto',
                 'ShortCircuitRemoval',
                 'SizeGuarded',
                 'UnrelatedCountGuard',
@@ -253,6 +262,64 @@ final class AnalysisAccuracyRegressionTest extends TestCase
             ],
             $this->grownClasses('Regression/growth-bounds.php'),
         );
+    }
+
+    /**
+     * Severity of one finding, by the class it was reported on.
+     */
+    private function severityOf(string $fixture, string $shortName): Severity
+    {
+        $matches = array_values(array_filter(
+            self::findingsFor($this->builtIn($fixture), RuleId::STATIC_COLLECTION_GROWTH),
+            static fn (Finding $f): bool => str_ends_with((string) $f->symbol->class, '\\' . $shortName),
+        ));
+
+        self::assertCount(1, $matches, sprintf('Expected exactly one WS008 finding on %s.', $shortName));
+
+        return $matches[0]->severity;
+    }
+
+    /**
+     * `self::$items['last'] = []` assigns an empty array into a key; it does
+     * not empty the collection, and can even add an entry.
+     */
+    public function test_clearing_one_key_is_not_a_full_reset(): void
+    {
+        self::assertSame(Severity::High, $this->severityOf('Regression/growth-bounds.php', 'ClearsOneKey'));
+        self::assertSame(Severity::High, $this->severityOf('Regression/growth-bounds.php', 'NullsOneKey'));
+    }
+
+    /**
+     * A closure body is not executed by the function that declares it, so a
+     * reset written inside one proves nothing about the enclosing method.
+     */
+    public function test_a_reset_inside_an_uncalled_closure_is_not_a_bound(): void
+    {
+        self::assertSame(
+            Severity::Medium,
+            $this->severityOf('Regression/growth-bounds.php', 'ResetInsideAnUncalledClosure'),
+        );
+    }
+
+    public function test_a_reset_skipped_by_goto_is_not_a_bound(): void
+    {
+        self::assertSame(
+            Severity::Medium,
+            $this->severityOf('Regression/growth-bounds.php', 'ResetSkippedByGoto'),
+        );
+    }
+
+    /**
+     * The worst growing function decides, so moving a method within its class
+     * cannot change the severity or the exit code.
+     */
+    public function test_severity_does_not_depend_on_method_declaration_order(): void
+    {
+        $first = $this->severityOf('Regression/growth-bounds.php', 'RemovalDeclaredFirst');
+        $second = $this->severityOf('Regression/growth-bounds.php', 'RemovalDeclaredSecond');
+
+        self::assertSame($first, $second);
+        self::assertSame(Severity::High, $first, 'One method never removes anything.');
     }
 
     /**
