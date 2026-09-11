@@ -351,6 +351,42 @@ final class LaravelArtisanTest extends TestCase
         self::assertSame(ExitCode::FindingsAboveThreshold->value, $ignored);
     }
 
+    /**
+     * The Artisan command is the CLI command, so the report language has to be
+     * the same one — including the part that says the runtimes were selected
+     * rather than detected.
+     */
+    public function test_artisan_uses_the_same_report_language_as_the_cli(): void
+    {
+        [, $display] = $this->artisan(['--fail-on' => 'never', '--no-ansi' => true]);
+
+        $flat = (string) preg_replace('/\s+/', ' ', $display);
+
+        self::assertStringContainsString('Analysis targets', $display);
+        self::assertStringNotContainsString('Runtime    ', $display);
+        self::assertStringContainsString('not detected', $flat);
+        self::assertStringContainsString('does not inspect how this application is deployed', $flat);
+    }
+
+    public function test_artisan_reports_a_threshold_failure_the_same_way(): void
+    {
+        [$status, $display] = $this->artisan(['--fail-on' => 'high', '--no-ansi' => true]);
+
+        self::assertSame(ExitCode::FindingsAboveThreshold->value, $status);
+        self::assertStringContainsString('Threshold exceeded', $display);
+        self::assertStringContainsString('configured fail_on level (HIGH)', $display);
+    }
+
+    public function test_artisan_json_carries_the_analysis_target_fields(): void
+    {
+        [, $display] = $this->artisan(['--format' => 'json', '--fail-on' => 'never']);
+
+        $decoded = self::decodeJson($display);
+
+        self::assertNotSame([], self::arrayAt($decoded, 'project', 'analysis_targets'));
+        self::assertFalse(self::boolAt($decoded, 'project', 'runtime_detected'));
+    }
+
     public function test_the_artisan_command_reuses_the_cli_option_definitions(): void
     {
         $cli = (new \WorkerSafety\Command\ScanCommand())->getDefinition();

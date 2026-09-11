@@ -13,7 +13,8 @@ use WorkerSafety\Finding\Severity;
  * Stable machine-readable report.
  *
  * The `version` field is the schema version and is bumped only on a breaking
- * change, so tooling can rely on it independently of the tool version.
+ * change, so tooling can rely on it independently of the tool version. Fields
+ * are only ever added within a version, never renamed or removed.
  */
 final class JsonReporter implements Reporter
 {
@@ -53,7 +54,13 @@ final class JsonReporter implements Reporter
                     'name' => $report->framework->identifier(),
                     'version' => $report->framework->version,
                 ],
+                // Selected with --runtime, never detected. `runtimes` is kept
+                // under its original name so existing consumers and baselines
+                // are unaffected; `analysis_targets` is the name that says
+                // what the value actually is.
                 'runtimes' => $report->runtimes->values(),
+                'analysis_targets' => $report->runtimes->values(),
+                'runtime_detected' => false,
                 'php' => $report->phpVersion,
                 'config' => $report->configPath,
                 'baseline' => $report->baselinePath,

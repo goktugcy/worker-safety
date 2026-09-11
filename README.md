@@ -79,8 +79,15 @@ Project
 Environment
   PHP        8.4.2
   Framework  Laravel 12
-  Runtime    FrankenPHP, Octane
   Config     worker-safety.yaml
+
+Analysis targets
+  FrankenPHP, Octane
+
+  Selected for this scan, not detected — Worker Safety does not inspect
+  how this application is deployed. Findings below describe what the code
+  would do if it ran under one of these runtimes; they are not observations
+  of its current behaviour.
 
 284 PHP files analyzed in 1.42s.
 
@@ -101,17 +108,22 @@ and hands the same instance to every request. UserContext declares 1 mutable
 instance property ($user) at app/Support/UserContext.php:12, which means
 values written while serving one request are still set for the next one. The
 property names read as request-specific state (user), so this is a concrete
-cross-request leak rather than a theoretical one: consider a scoped binding.
-$user is public, so any caller holding the shared instance can change it.
+cross-request leak rather than a theoretical one if the application runs on
+a persistent worker. $user is public, so any caller holding the shared
+instance can change it.
 
 Affected runtimes:
   FrankenPHP, Octane
 
 Recommendation:
-  - Use `$this->app->scoped()` instead of `singleton()`: Octane discards
-    scoped instances between requests.
+  - Consider `$this->app->scoped()`: Octane discards scoped instances
+    between requests. Check first what else resolves this class — anything
+    that outlives a request and took it through the constructor keeps the
+    instance it already has, so the binding changes while that consumer does
+    not.
   - Or make the service immutable and pass the per-request values in as
-    method arguments.
+    method arguments. That removes the question of lifetime instead of
+    answering it.
   - If the binding must stay a singleton, reset its state in a
     RequestReceived listener.
 
@@ -127,12 +139,20 @@ Summary
 
 Result: FAILED
 
-2 finding(s) at or above HIGH.
+Threshold exceeded: 2 finding(s) at or above the configured fail_on level (HIGH).
+That is a decision about the findings above against the configured
+threshold. Each one still has to be read: it describes a risk under a
+persistent worker, not a fault observed in production.
 ```
 
 Every finding says **what** was found, **why it is a risk under a worker**, and
 **what to do about it**. That last part is the whole point: a list of line
 numbers is not actionable.
+
+`FAILED` means the configured threshold was crossed — nothing more. It is not a
+statement that any of the findings has caused a fault, and a scan can also fail
+for the unrelated reason that some files could not be parsed; that is reported
+separately as `Incomplete analysis`.
 
 ## Rules
 
@@ -143,7 +163,7 @@ numbers is not actionable.
 | `WS003` | Medium | Environment mutation | any | `putenv()`, `ini_set()`, writes to `$_ENV` / `$_SERVER`. |
 | `WS004` | Medium | Singleton | any | The self-instantiating singleton pattern, graded by whether the instance is mutable. |
 | `WS005` | High | Container binding | Laravel | A class bound with `singleton()` that carries mutable state. |
-| `WS006` | Medium | Container binding | Laravel | A `singleton()` binding that should be `scoped()`. |
+| `WS006` | Medium | Container binding | Laravel | A `singleton()` binding that is a candidate for `scoped()` — a lifetime change to review, not a rename. |
 | `WS007` | High | Static state | any | Static state whose name or type reads as request-specific (`$currentUser`, `static ?User $u`). |
 | `WS008` | Medium | Memory retention | any | A static collection that only ever grows. |
 | `WS009` | Medium | Event registration | any | Listener, macro or handler registration on a request path. |
@@ -190,6 +210,14 @@ vendor/bin/worker-safety rules --format=json
   follows from the shape of the code, so the tool does not claim it. Review the
   finding and, if the bound is real, record the decision with an inline
   `// worker-safety-ignore WS008`.
+- **A conditional initializer is named as such, and no further.** `self::$x ??= …`
+  writes only while the slot is null or unset, so WS001 says a stored value is
+  reused rather than recomputed — a different story from a slot overwritten per
+  request. It stops there: `??=` is *not* proof that the initializer runs once,
+  because an initializer returning null leaves the slot empty and a reset
+  re-opens it, so the finding claims no lifetime for the value. Nor does it
+  decide whether the reuse is safe; see [the standard Laravel
+  factory](#the-standard-laravel-factory) below.
 - **The more specific rule wins.** A singleton's instance holder is reported by
   `WS004` alone, so one line never carries two contradictory severities.
 - **Registration in a service provider is not reported.** That is where it
@@ -199,6 +227,74 @@ vendor/bin/worker-safety rules --format=json
 
 If a rule is wrong about your code, that is a bug worth reporting — see
 [CONTRIBUTING.md](CONTRIBUTING.md).
+
+### The standard Laravel factory
+
+Every new Laravel application ships this, and WS001 reports it as `HIGH`:
+
+```php
+// database/factories/UserFactory.php
+protected static ?string $password;
+
+// …
+'password' => static::$password ??= Hash::make('password'),
+```
+
+**This is a real report, not a bug — and in this specific case it is almost
+certainly not a problem in your code.** The honest reason it is not silenced
+automatically is that the analyzer cannot tell this apart from the shapes that
+*are* bugs. All three of these are the same syntax to a parser:
+
+```php
+static::$password ??= Hash::make('password');  // fixed literal — harmless
+static::$user     ??= auth()->user();          // request #1's user, forever
+static::$tenant   ??= request('tenant');       // request #1's tenant, forever
+```
+
+The last two are genuine cross-request leaks: because `??=` writes only into an
+empty slot, whichever request stores a value there hands it to the requests that
+follow, until something resets or replaces it. Any rule broad enough to silence
+the first line — "the class name ends in `Factory`",
+"the file is under `database/factories`", "the assignment uses `??=`" — silences
+those two as well. Deciding properly would mean knowing what `Hash::make`,
+`auth()` and `request()` return, which is a question about the framework's
+behaviour, not about the syntax.
+
+So the tool reports what it can prove — the assignment writes only into an empty
+slot, so a stored value gets reused — states which question decides whether that
+matters (where the value comes from), and leaves the answer to you. It does not
+claim how long the value lasts: that depends on whether the initializer ever
+returns null and on resets it cannot see. For the stock factory the answer is that the input is a fixed
+string, so record that decision next to the code:
+
+```php
+// worker-safety-ignore WS001 memoized hash of a constant test password
+protected static ?string $password;
+```
+
+Or, if you would rather not touch the file, accept it once with a
+[baseline](#baseline-1).
+
+Know what you are buying in either case. Both the directive and the baseline
+entry are anchored to the **property declaration**, not to the initializer, so
+they keep applying if the initializer is later changed:
+
+```php
+// worker-safety-ignore WS001 memoized hash of a constant test password
+protected static ?string $password;      // declaration: unchanged
+
+'password' => static::$password ??= request('tenant'),   // now a real leak, still silent
+```
+
+That is the normal trade-off of any suppression — it is a decision recorded
+about a line — but it is worth knowing here, because the thing that decides the
+risk lives somewhere else in the file. If that matters to you, suppress WS001
+per file rather than project-wide, and re-read the initializer when the factory
+changes.
+
+`database` is one of the [default scan paths](#default-scan-paths) for Laravel,
+so this finding appears on a stock application the first time you run a scan.
+Handling it once, either way, is part of adopting the tool.
 
 ## CLI reference
 
@@ -565,6 +661,8 @@ progress, no banner:
     "paths": ["app"],
     "framework": { "name": "laravel", "version": "12" },
     "runtimes": ["frankenphp", "octane"],
+    "analysis_targets": ["frankenphp", "octane"],
+    "runtime_detected": false,
     "php": "8.4.2",
     "config": "worker-safety.yaml",
     "baseline": null
@@ -583,6 +681,8 @@ progress, no banner:
     "parse_errors": 0,
     "fail_on": "high",
     "failed": true,
+    "failed_on_severity": true,
+    "failed_on_incomplete_analysis": false,
     "by_rule": { "WS001": 1, "WS005": 1, "WS006": 1, "WS008": 1, "WS009": 1 }
   },
   "findings": [
@@ -612,6 +712,22 @@ progress, no banner:
 `version` is the schema version and only changes on a breaking change to the
 shape, independently of the tool version.
 
+### Reading the report fields
+
+- `project.analysis_targets` is what `--runtime` selected. `project.runtimes`
+  carries the same values under the original name and is kept for compatibility;
+  new consumers should read `analysis_targets`.
+- `project.runtime_detected` is always `false`. No runtime detection exists —
+  the field is there so a consumer never has to infer it from the presence of
+  the list.
+- `summary.failed` is the exit-code decision. The two reasons behind it are
+  reported separately: `failed_on_severity` means findings crossed `fail_on`,
+  and `failed_on_incomplete_analysis` means files could not be parsed. They are
+  independent and either can be true on its own.
+
+Fields are only ever added within a schema `version`, never renamed or removed,
+so reading by key is safe.
+
 ## Supported runtimes
 
 | Runtime | `--runtime` value |
@@ -620,6 +736,31 @@ shape, independently of the tool version.
 | Laravel Octane | `octane` |
 | RoadRunner | `roadrunner` |
 | Swoole / OpenSwoole | `swoole` |
+
+### These are targets, not detections
+
+Worker Safety **does not detect which runtime your application uses.** There is
+no such check anywhere in the tool, and the report labels the list `Analysis
+targets` for that reason: it is the set of runtimes the scan reasons about,
+chosen by you with `--runtime` (default: all four).
+
+Nor is the absence of a runtime package in `composer.json` treated as evidence
+that no persistent worker is involved. It is not reliable evidence: a runtime
+can be installed outside Composer — FrankenPHP and RoadRunner are binaries — the
+decision usually lives in deployment configuration the source tree never sees,
+and a long-running queue worker holds process state across jobs without any of
+these packages being present.
+
+That last point is a reason not to trust the inference, **not** a claim of
+support: queue workers are not an analysis target, `--runtime` has no value for
+them, and no rule models a job lifecycle. The four runtimes in the table above
+are the whole list.
+
+The practical consequence is that **nothing is hidden or downgraded because a
+runtime looks absent.** That is deliberate: the most useful moment to run this
+tool is *before* the migration, when none of those packages are installed yet.
+Findings are conditional statements — what this code would do if it ran under a
+persistent worker — and reading them is still your job.
 
 All four are analyzed by default. Selecting a subset narrows which rules run and
 which runtimes each finding lists, and when exactly one runtime is selected the
@@ -701,6 +842,18 @@ otherwise. Out of scope for v1:
   rather than guessed at.
 - **Bindings and listeners registered dynamically**, from a config array or a
   loop, are not correlated.
+- **Where a memoized value comes from, and how long it lasts.** WS001 can prove
+  that `self::$x ??= …` writes only into an empty slot, but not whether the
+  stored value is a constant or request data, and not how long it survives —
+  an initializer that returns null re-runs every time, and a reset in unscanned
+  code re-opens the slot. See [the standard Laravel
+  factory](#the-standard-laravel-factory).
+- **No runtime detection.** Which runtime an application actually uses is never
+  determined; `--runtime` selects what the analysis reasons about. See [these
+  are targets, not detections](#these-are-targets-not-detections).
+- **Suppression is anchored to the reported line.** An inline directive or a
+  baseline entry for a static property keeps applying when the code that
+  assigns it changes, because the fingerprint is built from the declaration.
 
 Position this tool accordingly. It is a
 

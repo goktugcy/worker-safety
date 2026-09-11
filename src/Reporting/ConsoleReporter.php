@@ -20,6 +20,27 @@ final class ConsoleReporter implements Reporter
 
     private const DIVIDER = '──────────────────────────────────────────────────────────────────────';
 
+    /**
+     * Printed under every scan, including a clean one.
+     *
+     * Worker Safety performs no runtime detection at all, and the absence of a
+     * runtime package in composer.json is not evidence that no persistent
+     * worker is used: queue workers, an externally installed runtime and the
+     * deployment configuration are all invisible from the source tree. Saying
+     * so plainly is the only honest option, and it keeps the tool usable as a
+     * pre-migration compatibility check.
+     */
+    /**
+     * Why a failing scan is not the same as a confirmed defect.
+     */
+    private const THRESHOLD_NOTE = 'That is a decision about the findings above against the configured threshold. '
+        . 'Each one still has to be read: it describes a risk under a persistent worker, not a fault observed in '
+        . 'production.';
+
+    private const TARGETS_NOTE = 'Selected for this scan, not detected — Worker Safety does not inspect how this '
+        . 'application is deployed. Findings below describe what the code would do if it ran under one of these '
+        . 'runtimes; they are not observations of its current behaviour.';
+
     public function report(ScanReport $report, OutputInterface $output): void
     {
         ConsoleStyles::register($output);
@@ -46,10 +67,14 @@ final class ConsoleReporter implements Reporter
         $output->writeln('  ' . self::escape($report->projectRoot));
         $output->writeln('');
 
+        // Two separate blocks on purpose. Everything under Environment was
+        // observed; everything under Analysis targets was chosen. Printing the
+        // targets as "Runtime" next to a detected framework version read as a
+        // claim that the application runs on them, which this tool never
+        // establishes.
         $output->writeln('<ws-heading>Environment</ws-heading>');
         $output->writeln(sprintf('  PHP        %s', $report->phpVersion));
         $output->writeln(sprintf('  Framework  %s', $report->framework->describe()));
-        $output->writeln(sprintf('  Runtime    %s', $report->runtimes->describe()));
 
         if ($report->configPath !== null) {
             $output->writeln(sprintf('  Config     %s', self::escape($report->configPath)));
@@ -60,12 +85,29 @@ final class ConsoleReporter implements Reporter
         }
 
         $output->writeln('');
+        $this->writeAnalysisTargets($report, $output);
         $output->writeln(sprintf(
             '%d PHP %s analyzed in %.2fs.',
             $report->filesScanned,
             $report->filesScanned === 1 ? 'file' : 'files',
             $report->durationSeconds,
         ));
+        $output->writeln('');
+    }
+
+    /**
+     * The runtimes this scan reasons about — selected, never detected.
+     */
+    private function writeAnalysisTargets(ScanReport $report, OutputInterface $output): void
+    {
+        $output->writeln('<ws-heading>Analysis targets</ws-heading>');
+        $output->writeln('  ' . $report->runtimes->describe());
+        $output->writeln('');
+
+        foreach ($this->wrap(self::TARGETS_NOTE, '  ') as $line) {
+            $output->writeln('<ws-muted>' . self::escape($line) . '</ws-muted>');
+        }
+
         $output->writeln('');
     }
 
@@ -261,17 +303,29 @@ final class ConsoleReporter implements Reporter
             $output->writeln('<ws-fail>Result: FAILED</ws-fail>');
             $output->writeln('');
 
+            // FAILED is a threshold decision, not a verdict on production. The
+            // two reasons are printed separately because they mean different
+            // things: one is about what was found, the other about what could
+            // not be looked at.
             if ($report->failedOnSeverity()) {
                 $output->writeln(sprintf(
-                    '%d finding(s) at or above %s.',
+                    'Threshold exceeded: %d finding(s) at or above the configured fail_on level (%s).',
                     $report->failingCount(),
                     strtoupper(($report->failOn ?? Severity::High)->value),
                 ));
+
+                foreach ($this->wrap(self::THRESHOLD_NOTE) as $line) {
+                    $output->writeln('<ws-muted>' . self::escape($line) . '</ws-muted>');
+                }
+            }
+
+            if ($report->failedOnSeverity() && $report->failedOnIncompleteAnalysis()) {
+                $output->writeln('');
             }
 
             if ($report->failedOnIncompleteAnalysis()) {
                 $output->writeln(sprintf(
-                    '%d file(s) could not be analyzed, so the scan cannot vouch for them. '
+                    'Incomplete analysis: %d file(s) could not be analyzed, so the scan cannot vouch for them. '
                     . 'Fix them, or pass --allow-parse-errors to accept the gap.',
                     $report->unanalyzedFileCount(),
                 ));

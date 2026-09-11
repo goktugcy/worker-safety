@@ -21,6 +21,22 @@ enum WriteKind: string
     /** `self::$x .= …`, `self::$x += …` */
     case Compound = 'compound';
 
+    /**
+     * `self::$x ??= …` — assigns only while the slot is null or unset.
+     *
+     * Tracked apart from Compound because the reuse is conditional rather than
+     * unconditional: a plain assignment replaces the value on every pass, while
+     * this one writes only into an empty slot, so a non-null value already
+     * there is reused instead.
+     *
+     * That is all it establishes. It is *not* evidence that the initializer
+     * runs once: an initializer that yields null leaves the slot empty and runs
+     * again on the next pass, and any reset — including one outside the scanned
+     * paths — re-opens it. Nor does it say anything about whether the stored
+     * value is request-specific.
+     */
+    case CoalesceAssign = 'coalesce-assign';
+
     /** `self::$x++`, `--self::$x` */
     case IncDec = 'inc-dec';
 
@@ -56,5 +72,18 @@ enum WriteKind: string
     public function isGrowth(): bool
     {
         return $this === self::Append || $this === self::KeyedWrite || $this === self::Grow;
+    }
+
+    /**
+     * True when the operation writes only into an empty slot.
+     *
+     * A statement about the assignment, not about the value or how often it is
+     * evaluated: reuse of a stored value is deliberate memoization when every
+     * input is fixed, and a cross-request leak when it is not. Nothing in the
+     * syntax separates the two.
+     */
+    public function isConditionalAssignment(): bool
+    {
+        return $this === self::CoalesceAssign;
     }
 }

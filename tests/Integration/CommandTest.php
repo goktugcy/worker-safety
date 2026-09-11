@@ -162,7 +162,11 @@ final class CommandTest extends TestCase
             '--fail-on' => 'never',
         ]);
 
-        self::assertStringContainsString('Runtime    FrankenPHP, Octane', $tester->getDisplay());
+        $display = $tester->getDisplay();
+
+        self::assertStringContainsString('Analysis targets', $display);
+        self::assertStringContainsString('FrankenPHP, Octane', $display);
+        self::assertStringNotContainsString('Runtime    ', $display);
     }
 
     public function test_rules_lists_every_rule(): void

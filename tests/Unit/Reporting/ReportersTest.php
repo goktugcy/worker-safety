@@ -91,6 +91,16 @@ final class ReportersTest extends TestCase
         return $output->fetch();
     }
 
+    /**
+     * Console prose is word-wrapped, so a sentence spans several lines. Tests
+     * that assert on wording compare against the flattened text instead of
+     * pinning where the wrap happens to fall.
+     */
+    private function renderFlat(\WorkerSafety\Reporting\Reporter $reporter, ScanReport $report): string
+    {
+        return (string) preg_replace('/\s+/', ' ', $this->render($reporter, $report));
+    }
+
     public function test_console_report_contains_the_essentials(): void
     {
         $text = $this->render(new ConsoleReporter(), $this->report());
@@ -99,7 +109,8 @@ final class ReportersTest extends TestCase
         self::assertStringContainsString('/project', $text);
         self::assertStringContainsString('PHP        8.4.2', $text);
         self::assertStringContainsString('Framework  Laravel 12', $text);
-        self::assertStringContainsString('Runtime    FrankenPHP, Octane', $text);
+        self::assertStringContainsString('Analysis targets', $text);
+        self::assertStringContainsString('FrankenPHP, Octane', $text);
         self::assertStringContainsString('284 PHP files analyzed', $text);
         self::assertStringContainsString('HIGH', $text);
         self::assertStringContainsString('WS001', $text);
@@ -108,6 +119,110 @@ final class ReportersTest extends TestCase
         self::assertStringContainsString('Affected runtimes:', $text);
         self::assertStringContainsString('Recommendation:', $text);
         self::assertStringContainsString('Result: FAILED', $text);
+    }
+
+    /**
+     * The runtimes are an input to the scan, not a finding about the project.
+     * Printing them as "Runtime" beside a detected framework version read as a
+     * claim that the application runs on them.
+     */
+    public function test_console_report_presents_runtimes_as_selected_targets_not_detected_facts(): void
+    {
+        $text = $this->render(new ConsoleReporter(), $this->report());
+
+        self::assertStringContainsString('Analysis targets', $text);
+        self::assertStringNotContainsString('Runtime    ', $text);
+
+        $flat = $this->renderFlat(new ConsoleReporter(), $this->report());
+        self::assertStringContainsString('not detected', $flat);
+        self::assertStringContainsString('does not inspect how this application is deployed', $flat);
+
+        // The detected block must not absorb the selected one.
+        $environment = substr($text, (int) strpos($text, 'Environment'), (int) strpos($text, 'Analysis targets') - (int) strpos($text, 'Environment'));
+        self::assertStringContainsString('Framework  Laravel 12', $environment);
+        self::assertStringNotContainsString('FrankenPHP', $environment);
+    }
+
+    public function test_console_report_frames_findings_as_conditional_risk(): void
+    {
+        $flat = $this->renderFlat(new ConsoleReporter(), $this->report());
+
+        self::assertStringContainsString('would do if it ran under one of these runtimes', $flat);
+        self::assertStringContainsString('not observations of its current behaviour', $flat);
+    }
+
+    /**
+     * A clean scan says the same thing: the targets were chosen, not observed.
+     */
+    public function test_the_targets_note_is_printed_even_when_nothing_is_found(): void
+    {
+        $text = $this->render(new ConsoleReporter(), $this->report(new FindingCollection([]), null));
+
+        self::assertStringContainsString('Analysis targets', $text);
+        self::assertStringContainsString('not detected', $text);
+        self::assertStringContainsString('Result: PASSED', $text);
+    }
+
+    public function test_a_failing_scan_says_it_is_a_threshold_decision(): void
+    {
+        $text = $this->render(new ConsoleReporter(), $this->report());
+
+        self::assertStringContainsString('Result: FAILED', $text);
+        self::assertStringContainsString('Threshold exceeded', $text);
+        self::assertStringContainsString('configured fail_on level (HIGH)', $text);
+        self::assertStringContainsString(
+            'not a fault observed in production',
+            $this->renderFlat(new ConsoleReporter(), $this->report()),
+        );
+    }
+
+    /**
+     * Failing because files could not be read is a different statement from
+     * failing because of what was found, so the two reasons never share a line.
+     */
+    public function test_incomplete_analysis_is_reported_as_a_separate_reason(): void
+    {
+        $text = $this->render(new ConsoleReporter(), $this->report(
+            new FindingCollection([]),
+            null,
+            [new ParseFailure('app/Broken.php', '/project/app/Broken.php', 18, 'Unexpected token', true)],
+        ));
+
+        self::assertStringContainsString('Incomplete analysis:', $text);
+        self::assertStringNotContainsString('Threshold exceeded', $text);
+    }
+
+    public function test_both_failure_reasons_are_listed_when_both_apply(): void
+    {
+        $text = $this->render(new ConsoleReporter(), $this->report(
+            null,
+            Severity::High,
+            [new ParseFailure('app/Broken.php', '/project/app/Broken.php', 18, 'Unexpected token', true)],
+        ));
+
+        self::assertStringContainsString('Threshold exceeded', $text);
+        self::assertStringContainsString('Incomplete analysis:', $text);
+    }
+
+    public function test_json_names_the_runtimes_as_analysis_targets_without_dropping_the_old_key(): void
+    {
+        $decoded = self::decodeJson($this->render(new JsonReporter(), $this->report()));
+
+        self::assertSame(['frankenphp', 'octane'], self::arrayAt($decoded, 'project', 'analysis_targets'));
+        self::assertSame(['frankenphp', 'octane'], self::arrayAt($decoded, 'project', 'runtimes'));
+        self::assertFalse(self::boolAt($decoded, 'project', 'runtime_detected'));
+    }
+
+    public function test_json_separates_the_two_failure_reasons(): void
+    {
+        $decoded = self::decodeJson($this->render(new JsonReporter(), $this->report(
+            null,
+            Severity::High,
+            [new ParseFailure('app/Broken.php', '/project/app/Broken.php', 18, 'Unexpected token', true)],
+        )));
+
+        self::assertTrue(self::boolAt($decoded, 'summary', 'failed_on_severity'));
+        self::assertTrue(self::boolAt($decoded, 'summary', 'failed_on_incomplete_analysis'));
     }
 
     public function test_console_report_mentions_suppressed_and_baselined_counts(): void

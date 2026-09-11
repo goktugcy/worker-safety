@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace WorkerSafety\Rule\BuiltIn;
 
+use WorkerSafety\Application\ApplicationInfo;
 use WorkerSafety\Ast\Index\ClassShape;
 use WorkerSafety\Ast\Index\PropertyShape;
 use WorkerSafety\Ast\Index\SingletonAnalyzer;
@@ -95,16 +96,28 @@ final class MutableStaticPropertyRule extends AbstractRule
         $hasResetPath = $this->hasResetPath($writes, $class);
         $first = $mutating[0];
         $accumulatorOnly = $this->isAccumulatorOnly($mutating);
+        $conditional = $this->onlyConditionalAssignments($mutating);
 
         return $this->finding(
             $context,
             $property->location,
-            sprintf('Mutable static property $%s may persist between requests.', $property->name),
-            $this->explain($class, $property, $first, $hasResetPath, $accumulatorOnly),
+            $conditional
+                ? sprintf(
+                    'Static property $%s is initialized with `??=`, so a stored value is reused by later requests.',
+                    $property->name,
+                )
+                : sprintf('Mutable static property $%s may persist between requests.', $property->name),
+            $conditional
+                ? $this->explainConditionalInitialization($class, $property, $first)
+                : $this->explain($class, $property, $first, $hasResetPath, $accumulatorOnly),
             $this->severityFor($hasResetPath, $accumulatorOnly),
             new SymbolContext($class->name, null, $property->name),
             $property->snippet,
-            $hasResetPath ? $this->resetRemediation() : null,
+            match (true) {
+                $conditional => $this->conditionalInitializationRemediation(),
+                $hasResetPath => $this->resetRemediation(),
+                default => null,
+            },
             $property->excerpt,
         );
     }
@@ -170,6 +183,32 @@ final class MutableStaticPropertyRule extends AbstractRule
         return $mutating !== [];
     }
 
+    /**
+     * True when every assignment to the property writes only into an empty slot.
+     *
+     * Worth telling apart from a slot that is overwritten per request, but it
+     * is a fact about the assignments and nothing more. In particular it does
+     * not establish that the initializer runs once — see
+     * explainConditionalInitialization() — and it does not change the severity.
+     *
+     * Clearing writes are excluded by the caller, so a property that is also
+     * reset somewhere still qualifies. That is why the wording talks about
+     * reuse "until something resets or replaces it" rather than about a value
+     * that is computed once.
+     *
+     * @param list<StateWrite> $mutating
+     */
+    private function onlyConditionalAssignments(array $mutating): bool
+    {
+        foreach ($mutating as $write) {
+            if (!$write->kind->isConditionalAssignment()) {
+                return false;
+            }
+        }
+
+        return $mutating !== [];
+    }
+
     private function severityFor(bool $hasResetPath, bool $accumulatorOnly): Severity
     {
         if ($accumulatorOnly) {
@@ -211,6 +250,61 @@ final class MutableStaticPropertyRule extends AbstractRule
         }
 
         return $explanation;
+    }
+
+    /**
+     * What `??=` does establish, and what it does not.
+     *
+     * It establishes that the assignment writes only into an empty slot, so a
+     * value already stored there is reused. It does NOT establish that the
+     * initializer runs once: an initializer that yields null leaves the slot
+     * empty and is evaluated again on the next pass, and any reset — including
+     * one in code that was not scanned — re-opens it. The wording stays inside
+     * that limit.
+     *
+     * It also does not guess whether the reuse is a problem. Separating a
+     * memoized constant from a memoized request value would mean knowing what
+     * every call in the initializer returns, and `Hash::make('password')`,
+     * `request('tenant')` and `auth()->user()` are the same shape to a parser.
+     * So the finding states both outcomes and points at the one thing a reader
+     * can check in a second: where the value comes from.
+     */
+    private function explainConditionalInitialization(
+        ClassShape $class,
+        PropertyShape $property,
+        StateWrite $first,
+    ): string {
+        $where = $first->inMethod !== null
+            ? sprintf('%s::%s()', $class->name, $first->inMethod)
+            : $first->location->relativePath;
+
+        return sprintf(
+            '%s is assigned with `??=` (%s, %s), which writes only while the slot is null or unset. Once a non-null '
+            . 'value is stored there, later requests served by the same worker reuse it instead of recomputing, until '
+            . 'something resets or replaces it. How long that lasts is not determined here: an initializer that '
+            . 'returns null leaves the slot empty and runs again, and a reset elsewhere — including in code outside '
+            . 'the scanned paths — re-opens it. What the reuse costs depends on where the value comes from, which '
+            . 'cannot be read off the syntax: if every input is fixed in the source — the hash of a constant test '
+            . 'password, say — reusing it is deliberate. If any input comes from the request, the session or the '
+            . 'authenticated user, then whichever request stored the value hands it to the requests that follow. '
+            . 'Check the initializer, then silence this finding with `// %s WS001` if the value really is constant.',
+            $this->describe($class, $property),
+            $where,
+            (string) $first->location,
+            ApplicationInfo::IGNORE_MARKER,
+        );
+    }
+
+    /**
+     * @return list<string>
+     */
+    private function conditionalInitializationRemediation(): array
+    {
+        return [
+            'Follow the initializer to its inputs. Anything reaching it from the request, the session, the container or the authenticated user makes the stored value a cross-request leak from whichever request stored it.',
+            'If the value is genuinely fixed, say so where it is written: `// ' . ApplicationInfo::IGNORE_MARKER . ' WS001` documents the decision and keeps the build green, and a baseline entry does the same for a whole set of them.',
+            'If it is not fixed, compute it per request instead — a request-scoped binding, or a local variable passed where it is needed.',
+        ];
     }
 
     /**

@@ -74,6 +74,42 @@ final class LaravelContainerRulesTest extends TestCase
         self::assertStringContainsString('scoped(UserContext::class', (string) $finding->details);
     }
 
+    /**
+     * `scoped()` changes how long the instance lives, so the finding has to
+     * ask for a review rather than present a rename. The trap it must name is
+     * a longer-lived consumer that captured the old instance: rebinding does
+     * not reach into an object that already holds a reference.
+     */
+    public function test_the_scoped_suggestion_asks_for_a_lifetime_review_rather_than_a_swap(): void
+    {
+        $finding = $this->assertHasFinding($this->analyze(), RuleId::LARAVEL_SCOPED_CANDIDATE);
+
+        self::assertStringContainsString('candidate', $finding->message);
+        self::assertStringNotContainsString('should use a scoped binding', $finding->message);
+
+        $details = (string) $finding->details;
+        self::assertStringContainsString('change of lifetime', $details);
+        self::assertStringContainsString('review', $details);
+
+        $advice = implode(' ', $finding->remediation);
+        self::assertStringContainsString('outlive a request', $advice);
+        self::assertStringNotContainsString('the change is safe', $advice);
+    }
+
+    /**
+     * Softening WS006 must not quiet WS005: a mutable singleton is the finding
+     * that carries the actual persistent-worker risk here.
+     */
+    public function test_the_mutable_singleton_finding_survives_alongside_it(): void
+    {
+        $result = $this->analyze();
+
+        $singleton = $this->assertHasFinding($result, RuleId::LARAVEL_SINGLETON_MUTABLE_STATE, null, Severity::High);
+        $scoped = $this->assertHasFinding($result, RuleId::LARAVEL_SCOPED_CANDIDATE, null, Severity::Medium);
+
+        self::assertSame($singleton->symbol->class, $scoped->symbol->class);
+    }
+
     public function test_an_immutable_service_bound_as_a_singleton_is_not_reported(): void
     {
         foreach ($this->analyze()->findings as $finding) {

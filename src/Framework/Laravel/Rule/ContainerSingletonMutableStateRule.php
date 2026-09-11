@@ -40,8 +40,8 @@ final class ContainerSingletonMutableStateRule extends AbstractRule
             Severity::High,
             RuleCategory::ContainerBinding,
             [
-                'Use `$this->app->scoped()` instead of `singleton()`: Octane discards scoped instances between requests.',
-                'Or make the service immutable and pass the per-request values in as method arguments.',
+                'Consider `$this->app->scoped()`: Octane discards scoped instances between requests. Check first what else resolves this class — anything that outlives a request and took it through the constructor keeps the instance it already has, so the binding changes while that consumer does not.',
+                'Or make the service immutable and pass the per-request values in as method arguments. That removes the question of lifetime instead of answering it.',
                 'If the binding must stay a singleton, reset its state in a RequestReceived listener.',
             ],
             RuntimeTargetSet::all(),
@@ -107,7 +107,7 @@ final class ContainerSingletonMutableStateRule extends AbstractRule
 
         if ($inspection->looksRequestScoped()) {
             $explanation .= sprintf(
-                ' The property names read as request-specific state (%s), so this is a concrete cross-request leak rather than a theoretical one: consider a scoped binding.',
+                ' The property names read as request-specific state (%s), so this is a concrete cross-request leak rather than a theoretical one if the application runs on a persistent worker.',
                 implode(', ', $inspection->requestTokens()),
             );
         }

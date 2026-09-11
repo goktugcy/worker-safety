@@ -463,7 +463,11 @@ final class IndexCollectingVisitor extends NodeVisitorAbstract
         }
 
         if ($node instanceof Expr\AssignOp) {
-            $this->recordWrite($node->var, WriteKind::Compound, $node);
+            $this->recordWrite(
+                $node->var,
+                $node instanceof Expr\AssignOp\Coalesce ? WriteKind::CoalesceAssign : WriteKind::Compound,
+                $node,
+            );
 
             return;
         }

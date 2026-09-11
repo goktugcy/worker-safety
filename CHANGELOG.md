@@ -7,6 +7,65 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+Report wording and false-positive handling, from feedback on real Laravel use.
+No rule was made quieter: nothing that was reported before is suppressed or
+downgraded now.
+
+### Changed
+
+- The console report no longer prints the selected runtimes as `Runtime`
+  alongside detected facts. They are their own `Analysis targets` block, with a
+  note saying they were chosen rather than detected and that the findings
+  describe what the code *would* do under a persistent worker. Worker Safety
+  performs no runtime detection, and the absence of a runtime package is not
+  treated as evidence that no worker is used — queue workers, externally
+  installed runtimes and deployment configuration all make that inference
+  unreliable, and the tool has to stay usable as a pre-migration check.
+- A failing scan says `Threshold exceeded: N finding(s) at or above the
+  configured fail_on level`, and states that this is a decision against the
+  configured threshold rather than a fault observed in production. Failing
+  because files could not be parsed is now printed as a separate
+  `Incomplete analysis:` reason instead of sharing the wording.
+- WS001 distinguishes a conditional initializer (`self::$x ??= …`) from a slot
+  that is overwritten per request, because the stories differ: `??=` writes only
+  into an empty slot, so a value stored there is reused by the requests that
+  follow instead of being recomputed. The finding stops at what that
+  establishes — it makes no claim that the initializer runs once, since an
+  initializer returning null leaves the slot empty and a reset re-opens it —
+  states which question decides the risk (where the value comes from), and
+  points at the inline directive.
+- WS005 and WS006 no longer present `singleton()` → `scoped()` as a rename. It
+  is a change of lifetime: the advice now asks which consumers resolve the
+  class, and warns that anything outliving a request keeps the instance it
+  already captured. WS006's message says "is a candidate for" rather than
+  "should use".
+
+### Added
+
+- `project.analysis_targets` and `project.runtime_detected` in the JSON report.
+  `project.runtimes` keeps its name and values, so existing consumers and
+  baselines are unaffected; fields are only added within a schema version.
+- Regression coverage for the memoization Laravel ships in every new
+  application (`static::$password ??= Hash::make('password')`), together with
+  the shapes that share its syntax but freeze request data
+  (`auth()->user()`, `request('tenant')`, a caller-supplied password). All are
+  reported, and the tests fail if a heuristic ever starts silencing them by
+  class name, path or operator. Two further shapes pin the limits of what `??=`
+  establishes: an initializer that returns null, and a reset immediately before
+  the assignment. Both recompute on every call — three computations in three
+  calls when run — so the report must not describe either as computed once.
+- Documentation for that case in the README, with the exact inline directive to
+  record the decision, and a note that such a suppression is anchored to the
+  property declaration — so it keeps applying if the initializer later changes.
+
+### Known limitations
+
+- Whether a memoized value is a constant or request data is not determined, and
+  neither is how long it survives. `Hash::make('password')`, `request('tenant')` and
+  `auth()->user()` are the same shape to a parser, so the stock Laravel factory
+  is reported and has to be accepted deliberately, via an inline directive or
+  the baseline. Nothing was added that would silence it by guessing.
+
 ## [1.0.1] - 2026-09-11
 
 A compatibility fix for `1.0.0`, which could not be installed alongside Symfony 8.
