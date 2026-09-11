@@ -42,6 +42,9 @@ happen — before you flip the switch.
 composer require --dev goktugcy/worker-safety
 ```
 
+In a Laravel application that is all you need: the package registers an Artisan
+command through package discovery. See [Laravel](#laravel) below.
+
 ## Quick start
 
 ```bash
@@ -239,6 +242,82 @@ never prompts — safe to run in CI.
 
 Records every current finding so that only new ones fail the build. See
 [Baseline](#baseline-1).
+
+## Laravel
+
+Installing the package in a Laravel application registers one Artisan command
+through package discovery:
+
+```bash
+php artisan worker-safety:scan
+php artisan worker-safety:scan app --runtime=octane --fail-on=medium
+php artisan worker-safety:scan --format=sarif --no-progress
+```
+
+It is the same command as `vendor/bin/worker-safety scan`, not a reimplementation
+of it: identical arguments, options, output formats, baseline handling and
+[exit codes](#exit-codes). Anything documented for `scan` works here unchanged.
+
+The one difference is the default project root. Artisan can be invoked from any
+directory, so the scan defaults to the application's `base_path()` rather than
+the current working directory. `--project-dir` still overrides it, and a
+relative value is resolved against the application root:
+
+```bash
+# Scans the application, wherever you run it from
+php artisan worker-safety:scan
+
+# Scans a package inside the repository instead
+php artisan worker-safety:scan --project-dir=packages/billing
+```
+
+The command is only registered for console runs, and the package is a
+`require-dev` dependency, so nothing is loaded during an HTTP request or in a
+production install built with `--no-dev`.
+
+### Supported Laravel versions
+
+| Version | Status |
+| --- | --- |
+| Laravel 12 | Verified: package discovery, all documented options, JSON and SARIF output, baseline round-trip and every exit code. |
+| Laravel 11 | Verified: same checks. On PHP 8.5 the framework itself emits deprecation notices during bootstrap that land on stdout, which will corrupt `--format=json` or `--format=sarif` output — that is Laravel 11 on PHP 8.5, not this package, and `php artisan list` does it too. PHP 8.2–8.4 is unaffected. |
+| Laravel 10 | Not verified. The package's constraints (PHP ^8.2, `symfony/console` ^6.4 or ^7.0) do not exclude it, but it has not been tested, so no support is claimed. |
+
+### If package discovery is disabled
+
+Projects that opt out of discovery — either globally, or by listing this package
+under `extra.laravel.dont-discover` — should register the provider by hand.
+
+In Laravel 11 and 12, add it to `bootstrap/providers.php`:
+
+```php
+return [
+    App\Providers\AppServiceProvider::class,
+    WorkerSafety\Integration\Laravel\WorkerSafetyServiceProvider::class,
+];
+```
+
+In Laravel 10, add it to the `providers` array in `config/app.php`:
+
+```php
+'providers' => [
+    // …
+    WorkerSafety\Integration\Laravel\WorkerSafetyServiceProvider::class,
+],
+```
+
+Because the package is a dev dependency, guard the registration if the same file
+is used for a production build without dev dependencies:
+
+```php
+if (class_exists(WorkerSafety\Integration\Laravel\WorkerSafetyServiceProvider::class)) {
+    // register it
+}
+```
+
+Laravel is never a runtime dependency of this package. In a project without it,
+`vendor/bin/worker-safety` behaves exactly as documented everywhere else in this
+README, and nothing under `WorkerSafety\Integration\Laravel` is ever autoloaded.
 
 ## Exit codes
 

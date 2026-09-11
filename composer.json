@@ -3,14 +3,15 @@
     "description": "Static analysis for PHP applications running on persistent workers. Detect cross-request state risks before they reach production.",
     "type": "library",
     "keywords": [
-        "static-analysis",
         "frankenphp",
+        "laravel",
         "octane",
-        "roadrunner",
-        "swoole",
-        "worker",
         "php",
-        "sarif"
+        "roadrunner",
+        "sarif",
+        "static-analysis",
+        "swoole",
+        "worker"
     ],
     "homepage": "https://github.com/goktugcy/worker-safety",
     "license": "MIT",
@@ -30,8 +31,12 @@
     },
     "require-dev": {
         "friendsofphp/php-cs-fixer": "^3.64",
+        "laravel/framework": "^12.0",
         "phpstan/phpstan": "^2.1",
         "phpunit/phpunit": "^11.5 || ^12.0"
+    },
+    "suggest": {
+        "laravel/framework": "Registers `php artisan worker-safety:scan` through package discovery. Verified against Laravel 11 and 12."
     },
     "autoload": {
         "psr-4": {
@@ -54,11 +59,17 @@
             "php": "8.2.0"
         },
         "sort-packages": true,
-        "optimize-autoloader": true
+        "optimize-autoloader": true,
+        "policy": {}
     },
     "extra": {
         "branch-alias": {
             "dev-main": "0.1.x-dev"
+        },
+        "laravel": {
+            "providers": [
+                "WorkerSafety\\Integration\\Laravel\\WorkerSafetyServiceProvider"
+            ]
         }
     },
     "scripts": {

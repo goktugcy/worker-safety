@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Laravel integration.** Installing the package in a Laravel application now
+  registers `php artisan worker-safety:scan` through package discovery.
+
+  The Artisan command subclasses the existing `ScanCommand`, so the arguments,
+  options, output formats, baseline handling and exit codes are literally the
+  same implementation rather than a second copy that could drift. The only
+  difference is the default project root: Artisan can be run from anywhere, so
+  the scan defaults to the application's `base_path()` instead of the current
+  working directory, with `--project-dir` still taking precedence and a relative
+  value resolved against the application root.
+
+  The command is registered only for console runs, and Laravel remains a
+  development-only suggestion rather than a dependency — in a project without
+  it, `vendor/bin/worker-safety` is unchanged and nothing under
+  `WorkerSafety\Integration\Laravel` is autoloaded.
+
+  Verified against Laravel 11 and 12. Laravel 10 is not excluded by the
+  package's constraints but has not been tested, so it is not claimed as
+  supported. See the README for the version table and for manual provider
+  registration when package discovery is disabled.
+
+
 ### Changed — eighth release review
 
 `WS008` now draws the line for a "provable reset" at the statement boundary

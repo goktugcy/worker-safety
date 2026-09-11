@@ -23,11 +23,16 @@ use WorkerSafety\Reporting\ReporterFactory;
 use WorkerSafety\Runtime\RuntimeTargetSet;
 use WorkerSafety\Support\Paths;
 
+/**
+ * Not final: the Laravel integration subclasses this so that
+ * `php artisan worker-safety:scan` reuses these option definitions and this
+ * implementation rather than restating them.
+ */
 #[AsCommand(
     name: 'scan',
     description: 'Analyze a project for cross-request state risks under persistent workers',
 )]
-final class ScanCommand extends AbstractCommand
+class ScanCommand extends AbstractCommand
 {
     /**
      * Below this many files a progress bar is more noise than help.
