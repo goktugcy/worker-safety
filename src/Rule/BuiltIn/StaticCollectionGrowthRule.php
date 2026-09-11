@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace WorkerSafety\Rule\BuiltIn;
 
+use WorkerSafety\Application\ApplicationInfo;
 use WorkerSafety\Ast\Index\ClassShape;
 use WorkerSafety\Ast\Index\DefaultValueKind;
 use WorkerSafety\Ast\Index\PropertyShape;
@@ -22,12 +23,21 @@ use WorkerSafety\Runtime\RuntimeTargetSet;
 /**
  * WS008 — a static collection that only ever grows.
  *
- * Three outcomes, based on where the release path is:
+ * Three outcomes, based on what can actually be proven:
  *
- *  - no clearing operation anywhere                       → high (unbounded)
- *  - cleared only from a reset-style method               → medium (release
- *    path exists but something has to call it every request)
- *  - cleared in the same method that grows it (LRU/bound) → not reported
+ *  - no clearing operation anywhere              → high (unbounded)
+ *  - a removal exists but bounds nothing that
+ *    can be verified from the code alone         → medium
+ *  - an unconditional reset of the whole
+ *    collection in the growing function          → not reported
+ *
+ * Only that last shape is a proof. Certifying an eviction would mean knowing
+ * that the removal runs on every path through its guard, that it removes at
+ * least as much as was added, and that the limit is finite; matching a removal
+ * to an addition would mean knowing their order and the runtime value of the
+ * key. None of that follows from the shape of the code, so an unproven removal
+ * lowers the severity and sharpens the message rather than silencing the
+ * finding.
  */
 final class StaticCollectionGrowthRule extends AbstractRule
 {
@@ -76,21 +86,26 @@ final class StaticCollectionGrowthRule extends AbstractRule
         }
 
         $writes = $context->index()->writesForProperty($property);
-        $verdict = $this->judge($writes, $property->writeKey());
+        $verdict = $this->judge($writes);
 
         if ($verdict === null) {
             return null;
         }
 
-        [$severity, $growth] = $verdict;
+        [$severity, $growth, $release] = $verdict;
 
         return $this->finding(
             $context,
             $property->location,
-            $severity === Severity::High
-                ? sprintf('Static collection $%s grows without any release path.', $property->name)
-                : sprintf('Static collection $%s is only released by an explicit reset.', $property->name),
-            $this->explain($class->shortName . '::$' . $property->name, $growth, $severity, $class),
+            match ($release) {
+                'unproven' => sprintf(
+                    'Static collection $%s grows and the removals beside it are not a provable bound.',
+                    $property->name,
+                ),
+                'reset' => sprintf('Static collection $%s is only released by an explicit reset.', $property->name),
+                default => sprintf('Static collection $%s grows without any release path.', $property->name),
+            },
+            $this->explain($class->shortName . '::$' . $property->name, $growth, $release, $class),
             $severity,
             new SymbolContext($class->name, null, $property->name),
             $property->snippet,
@@ -105,23 +120,34 @@ final class StaticCollectionGrowthRule extends AbstractRule
             return null;
         }
 
-        $verdict = $this->judge($local->writes, '$' . $local->name);
+        $verdict = $this->judge($local->writes);
 
         if ($verdict === null) {
             return null;
         }
 
-        [$severity, $growth] = $verdict;
+        [$severity, $growth, $release] = $verdict;
 
         return $this->finding(
             $context,
             $local->location,
-            sprintf('Function-scoped static collection $%s grows across requests.', $local->name),
+            $release === 'unproven'
+                ? sprintf(
+                    'Function-scoped static collection $%s grows and the removals beside it are not a provable bound.',
+                    $local->name,
+                )
+                : sprintf('Function-scoped static collection $%s grows across requests.', $local->name),
             sprintf(
-                'The `static` array in %s is created once per worker process, so every entry added while serving a request is still there for the next one. First growth at %s (%s).',
+                'The `static` array in %s is created once per worker process, so every entry added while serving a request is still there for the next one. First growth at %s (%s).%s',
                 $local->describeScope(),
                 (string) $growth->location,
                 $growth->kind->value,
+                $release === 'unproven'
+                    ? sprintf(
+                        ' There are removals in the same function, but nothing in the code proves they bound it. Confirm the behaviour, then silence this finding with `// %s WS008` if the trade-off is deliberate.',
+                        ApplicationInfo::IGNORE_MARKER,
+                    )
+                    : '',
             ),
             $severity,
             new SymbolContext($local->inClass, $local->inFunction, null, $local->name),
@@ -133,11 +159,12 @@ final class StaticCollectionGrowthRule extends AbstractRule
 
     /**
      * @param list<StateWrite> $writes
-     * @param string $key index key of the collection being judged
      *
-     * @return array{0: Severity, 1: StateWrite}|null
+     * @return array{0: Severity, 1: StateWrite, 2: string}|null severity, first
+     *                                                           unbounded write,
+     *                                                           and why
      */
-    private function judge(array $writes, string $key): ?array
+    private function judge(array $writes): ?array
     {
         // A keyed write whose every dimension is a fixed key targets a fixed
         // slot, so it cannot grow the collection without bound.
@@ -150,114 +177,50 @@ final class StaticCollectionGrowthRule extends AbstractRule
         $clearing = array_values(array_filter($writes, static fn (StateWrite $w): bool => $w->isClearing()));
 
         if ($clearing === []) {
-            return [Severity::High, $growth[0]];
+            return [Severity::High, $growth[0], 'none'];
         }
 
         $unbounded = array_values(array_filter(
             $growth,
-            fn (StateWrite $w): bool => !$this->scopeIsBounded(self::scopeOf($w), $growth, $clearing, $key),
+            fn (StateWrite $w): bool => !$this->scopeIsBounded(self::scopeOf($w), $clearing),
         ));
 
         if ($unbounded === []) {
             return null;
         }
 
-        // An explicit reset method is a release path someone has to call;
-        // an incidental clear elsewhere is not one at all.
+        // A removal in the growing function is evidence of intent, not a proof
+        // of a bound, so it lowers the severity rather than removing the
+        // finding. So does a reset method that something has to call.
         foreach ($clearing as $write) {
-            if ($write->inResetMethod) {
-                return [Severity::Medium, $unbounded[0]];
+            if (self::scopeOf($write) === self::scopeOf($unbounded[0])) {
+                return [Severity::Medium, $unbounded[0], 'unproven'];
             }
         }
 
-        return [Severity::High, $unbounded[0]];
+        foreach ($clearing as $write) {
+            if ($write->inResetMethod) {
+                return [Severity::Medium, $unbounded[0], 'reset'];
+            }
+        }
+
+        return [Severity::High, $unbounded[0], 'none'];
     }
 
     /**
      * Whether the growth in one function is provably bounded.
      *
-     * The bar is a proof, not a plausible-looking pairing, because silencing
-     * the rule wrongly hides a real leak. Exactly three shapes qualify:
-     *
-     *  1. an unconditional reset of the whole collection — nothing survives to
-     *     the next call;
-     *  2. every addition matched by a removal of the *same* array key, with
-     *     both guaranteed to run;
-     *  3. one addition plus an eviction guarded by a genuine upper bound on
-     *     *this* collection — `if (count(self::$x) > <finite limit>)`.
-     *
-     * Anything else — a write in a loop, behind a condition, after an early
-     * return, on the right of `&&`, an unrelated `count()`, a comparison that
-     * cannot bound anything, or a removal whose key may not exist — leaves the
-     * warning in place.
-     *
-     * @param list<StateWrite> $growth
      * @param list<StateWrite> $clearing
      */
-    private function scopeIsBounded(string $scope, array $growth, array $clearing, string $key): bool
+    private function scopeIsBounded(string $scope, array $clearing): bool
     {
-        $growthHere = self::inScope($growth, $scope);
-        $clearingHere = self::inScope($clearing, $scope);
-
-        if ($clearingHere === []) {
-            return false;
-        }
-
-        // (1) An unconditional reset of the whole collection.
-        foreach ($clearingHere as $write) {
+        foreach (self::inScope($clearing, $scope) as $write) {
             if ($write->kind->isFullRelease() && $write->guaranteed) {
                 return true;
             }
         }
 
-        // (2) Every addition undone by a removal of the same key.
-        if (self::everyGrowthIsUndone($growthHere, $clearingHere)) {
-            return true;
-        }
-
-        // (3) A single addition, evicted once this collection exceeds a limit.
-        if (count($growthHere) === 1 && !$growthHere[0]->inLoop) {
-            foreach ($clearingHere as $write) {
-                if ($write->boundsCollection($key)) {
-                    return true;
-                }
-            }
-        }
-
         return false;
-    }
-
-    /**
-     * @param list<StateWrite> $growth
-     * @param list<StateWrite> $clearing
-     */
-    private static function everyGrowthIsUndone(array $growth, array $clearing): bool
-    {
-        if ($growth === []) {
-            return false;
-        }
-
-        foreach ($growth as $addition) {
-            if (!$addition->guaranteed || $addition->keyExpression === null) {
-                return false;
-            }
-
-            $undone = false;
-
-            foreach ($clearing as $removal) {
-                if ($removal->guaranteed && $removal->targetsSameKeyAs($addition)) {
-                    $undone = true;
-
-                    break;
-                }
-            }
-
-            if (!$undone) {
-                return false;
-            }
-        }
-
-        return true;
     }
 
     /**
@@ -297,31 +260,38 @@ final class StaticCollectionGrowthRule extends AbstractRule
             || $property->default === DefaultValueKind::NonEmptyArray;
     }
 
-    private function explain(string $subject, StateWrite $growth, Severity $severity, ClassShape $class): string
+    private function explain(string $subject, StateWrite $growth, string $release, ClassShape $class): string
     {
-        $explanation = sprintf(
-            '%s is appended to at runtime (%s at %s) and the analyzer found no operation that removes entries again.',
-            $subject,
-            $growth->kind->value,
-            (string) $growth->location,
-        );
+        $where = sprintf('(%s at %s)', $growth->kind->value, (string) $growth->location);
 
-        if ($severity === Severity::Medium) {
+        if ($release === 'unproven') {
+            return sprintf(
+                '%s is appended to at runtime %s. There are removals in the same function, but nothing in the code proves they bound it: that would mean knowing the removal runs on every path, that it takes out at least as much as was added, and that any size limit is finite. If the eviction is correct this is bounded; if it is not, the array grows for the whole life of the worker. Confirm it, then silence this finding with `// %s WS008` if the trade-off is deliberate.',
+                $subject,
+                $where,
+                ApplicationInfo::IGNORE_MARKER,
+            );
+        }
+
+        if ($release === 'reset') {
             $names = [];
 
             foreach ($class->resetMethods() as $method) {
                 $names[] = $method->name . '()';
             }
 
-            $explanation = sprintf(
-                '%s is appended to at runtime (%s at %s). Entries are only removed by %s, so the collection keeps growing for as long as nothing calls it — and under a persistent worker that is the whole life of the process.',
+            return sprintf(
+                '%s is appended to at runtime %s. Entries are only removed by %s, so the collection keeps growing for as long as nothing calls it — and under a persistent worker that is the whole life of the process. Each request therefore leaves memory behind that is never reclaimed until the worker restarts.',
                 $subject,
-                $growth->kind->value,
-                (string) $growth->location,
+                $where,
                 $names === [] ? 'an explicit reset' : implode(', ', $names),
             );
         }
 
-        return $explanation . ' Each request therefore leaves memory behind that is never reclaimed until the worker restarts.';
+        return sprintf(
+            '%s is appended to at runtime %s and the analyzer found no operation that removes entries again. Each request therefore leaves memory behind that is never reclaimed until the worker restarts.',
+            $subject,
+            $where,
+        );
     }
 }

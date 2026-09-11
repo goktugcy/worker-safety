@@ -197,3 +197,85 @@ class ShortCircuitRemoval
         $evict && array_pop(self::$items);
     }
 }
+
+/**
+ * The guard is valid but the eviction is behind a second condition.
+ */
+class EvictionBehindASecondCondition
+{
+    private static array $items = [];
+
+    public static function add(string $value, bool $evict): void
+    {
+        self::$items[] = $value;
+
+        if (count(self::$items) > 10) {
+            if ($evict) {
+                array_pop(self::$items);
+            }
+        }
+    }
+}
+
+/**
+ * The guard is valid but the removed key was never added.
+ */
+class UnsetsMissingKeyUnderGuard
+{
+    private static array $items = [];
+
+    public static function add(string $value): void
+    {
+        self::$items[] = $value;
+
+        if (count(self::$items) > 10) {
+            unset(self::$items['never']);
+        }
+    }
+}
+
+/**
+ * INF is not a finite limit, so the eviction never runs.
+ */
+class InfiniteLimit
+{
+    private static array $items = [];
+
+    public static function add(string $value): void
+    {
+        self::$items[] = $value;
+
+        if (count(self::$items) > INF) {
+            array_pop(self::$items);
+        }
+    }
+}
+
+/**
+ * The removal happens before the addition.
+ */
+class RemovalBeforeAddition
+{
+    private static array $items = [];
+
+    public static function add(string $key): void
+    {
+        unset(self::$items[$key]);
+        self::$items[$key] = true;
+    }
+}
+
+/**
+ * The key expression is textually identical but its value has changed.
+ */
+class ReassignedKey
+{
+    private static array $items = [];
+
+    public static function add(string $key): void
+    {
+        self::$items[$key] = true;
+        $key = 'never';
+        unset(self::$items[$key]);
+    }
+}

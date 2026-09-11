@@ -52,11 +52,14 @@ What each one is pointing at:
 ```text
 LOW WS001  Mutable static property
 
-after/PermissionCache.php:18  Example\After\PermissionCache::$entries
+after/PermissionCache.php  Example\After\PermissionCache::$entries
 
   Critical  0
   High      0
   Medium    0
+  Low       1
+
+  1 finding(s) suppressed by inline directives or config.
 ```
 
 The fixes:
@@ -69,6 +72,15 @@ The fixes:
   worker boot.
 - `exit(1)` became a returned response.
 - `putenv()` is gone; the value is passed as an argument.
+
+`PermissionCache` also carries an inline `// worker-safety-ignore WS008`. Its
+eviction does cap the array, but that is a fact about how the code *behaves*,
+not about how it *looks*: proving it would mean knowing the removal runs on
+every path, that it takes out at least as much as was added, and that the limit
+is finite. The analyzer refuses to certify that, reports it at `MEDIUM`, and
+leaves the decision to a human — the ignore records that the trade-off was
+reviewed and accepted. That is the intended workflow for a risk you have
+actually looked at.
 
 The remaining `LOW` is deliberate, and it is worth reading:
 

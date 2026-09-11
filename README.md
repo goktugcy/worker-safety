@@ -172,15 +172,18 @@ vendor/bin/worker-safety rules --format=json
 - **A release path lowers the severity instead of hiding the finding.** A static
   cache cleared only by a `flush()` method is `MEDIUM`, and one with no release
   path at all is `HIGH`.
-- **Silence requires a proof, not a plausible pairing.** WS008 only goes quiet
-  for three shapes: an unconditional reset of the whole collection; every
-  addition matched by a removal of the *same* array key, both guaranteed to
-  run; or one addition plus an eviction guarded by a real upper bound on that
-  collection (`if (count(self::$x) > <finite limit>)`). A write in a loop,
-  behind a condition, after an early return or on the right of `&&` is not
-  guaranteed; an unrelated `count()` or a comparison that can never fire is not
-  a bound. Anything short of a proof keeps the warning, because silencing it
-  wrongly hides a real leak.
+- **Silence requires a proof, and only one shape qualifies.** WS008 goes quiet
+  for exactly one pattern: an unconditional reset of the whole collection in the
+  function that grows it, because then nothing can carry over to the next call.
+  Everything else — including the `if (count($x) > N) array_shift($x)` eviction
+  idiom — is reported, at `MEDIUM` rather than `HIGH`, with a message saying the
+  removal is there but unproven. Certifying an eviction would mean knowing that
+  it runs on every path through its guard, that it removes at least as much as
+  was added, and that the limit is finite; matching a removal to an addition
+  would mean knowing their order and the runtime value of the key. None of that
+  follows from the shape of the code, so the tool does not claim it. Review the
+  finding and, if the bound is real, record the decision with an inline
+  `// worker-safety-ignore WS008`.
 - **The more specific rule wins.** A singleton's instance holder is reported by
   `WS004` alone, so one line never carries two contradictory severities.
 - **Registration in a service provider is not reported.** That is where it

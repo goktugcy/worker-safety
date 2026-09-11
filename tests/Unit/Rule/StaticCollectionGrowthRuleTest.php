@@ -27,11 +27,19 @@ final class StaticCollectionGrowthRuleTest extends TestCase
         self::assertStringContainsString('without any release path', $append->message);
     }
 
-    public function test_a_collection_bounded_in_the_same_method_is_not_reported(): void
+    /**
+     * The eviction idiom is recognised as intent, not as proof: the finding
+     * drops to MEDIUM instead of disappearing, because nothing in the code
+     * shows the removal actually bounds the array.
+     */
+    public function test_an_eviction_in_the_same_method_lowers_the_severity(): void
     {
         $result = AnalyzerHarness::analyze('WS008/safe.php', [new StaticCollectionGrowthRule()]);
 
-        $this->assertNoFindings($result);
+        $finding = $this->assertHasFinding($result, RuleId::STATIC_COLLECTION_GROWTH, 11, Severity::Medium);
+
+        self::assertStringContainsString('not a provable bound', $finding->message);
+        self::assertStringContainsString('worker-safety-ignore WS008', (string) $finding->details);
     }
 
     public function test_a_reset_only_release_path_is_medium(): void

@@ -65,15 +65,6 @@ final class IndexCollectingVisitor extends NodeVisitorAbstract
     private int $conditionalDepth = 0;
 
     /**
-     * Keys of the collections whose size guards the code currently being
-     * visited. `null` is a barrier: an `else` branch does not inherit the
-     * guard from its own `if`.
-     *
-     * @var list<string|null>
-     */
-    private array $sizeGuardStack = [];
-
-    /**
      * @param list<ContainerBindingCollector> $bindingCollectors
      */
     public function __construct(
@@ -89,7 +80,6 @@ final class IndexCollectingVisitor extends NodeVisitorAbstract
         $this->functionStack = [];
         $this->loopDepth = 0;
         $this->conditionalDepth = 0;
-        $this->sizeGuardStack = [];
 
         return null;
     }
@@ -198,18 +188,6 @@ final class IndexCollectingVisitor extends NodeVisitorAbstract
             ++$this->conditionalDepth;
         }
 
-        // An `else` must not inherit its own `if`'s size guard.
-        if ($node instanceof Stmt\Else_) {
-            $this->sizeGuardStack[] = null;
-
-            return;
-        }
-
-        $guarded = $this->sizeGuardTarget($node);
-
-        if ($guarded !== null) {
-            $this->sizeGuardStack[] = $guarded;
-        }
     }
 
     private function leaveControlFlow(Node $node): void
@@ -218,10 +196,6 @@ final class IndexCollectingVisitor extends NodeVisitorAbstract
             --$this->loopDepth;
         } elseif (self::isBranch($node)) {
             --$this->conditionalDepth;
-        }
-
-        if ($node instanceof Stmt\Else_ || $this->sizeGuardTarget($node) !== null) {
-            array_pop($this->sizeGuardStack);
         }
 
         // Set on leave, so the returned expression itself still counts as
@@ -263,109 +237,6 @@ final class IndexCollectingVisitor extends NodeVisitorAbstract
             || $node instanceof Expr\BinaryOp\LogicalAnd
             || $node instanceof Expr\BinaryOp\LogicalOr
             || $node instanceof Expr\BinaryOp\Coalesce;
-    }
-
-    /**
-     * The collection whose size bounds the branch this node opens, if any.
-     *
-     * Only the shape that genuinely proves an upper bound counts:
-     * `count($collection) > <finite limit>` (in either operand order) on an
-     * `if`/`elseif`/`while`, with the guarded code in the branch taken when the
-     * limit is exceeded. A `count()` call somewhere in the condition is not
-     * enough — `count([]) > 10` and `count(self::$x) < 0` prove nothing.
-     */
-    private function sizeGuardTarget(Node $node): ?string
-    {
-        $condition = match (true) {
-            $node instanceof Stmt\If_,
-            $node instanceof Stmt\ElseIf_,
-            $node instanceof Stmt\While_ => $node->cond,
-            default => null,
-        };
-
-        if ($condition === null) {
-            return null;
-        }
-
-        // count($x) > N / count($x) >= N
-        if ($condition instanceof Expr\BinaryOp\Greater || $condition instanceof Expr\BinaryOp\GreaterOrEqual) {
-            return $this->countedCollection($condition->left, $condition->right);
-        }
-
-        // N < count($x) / N <= count($x)
-        if ($condition instanceof Expr\BinaryOp\Smaller || $condition instanceof Expr\BinaryOp\SmallerOrEqual) {
-            return $this->countedCollection($condition->right, $condition->left);
-        }
-
-        return null;
-    }
-
-    /**
-     * Resolve `count($collection)` compared against a finite limit.
-     */
-    private function countedCollection(Expr $countSide, Expr $limitSide): ?string
-    {
-        if (!$countSide instanceof Expr\FuncCall
-            || !in_array(AstHelper::functionName($countSide), ['count', 'sizeof'], true)
-        ) {
-            return null;
-        }
-
-        if (!self::isFiniteLimit($limitSide)) {
-            return null;
-        }
-
-        $first = $countSide->args[0] ?? null;
-
-        if (!$first instanceof Node\Arg) {
-            return null;
-        }
-
-        return $this->writeKeyOf($first->value);
-    }
-
-    /**
-     * A limit that is known to be finite at compile time.
-     */
-    private static function isFiniteLimit(Expr $expr): bool
-    {
-        if ($expr instanceof Node\Scalar\Int_ || $expr instanceof Node\Scalar\Float_) {
-            return true;
-        }
-
-        if ($expr instanceof Expr\ClassConstFetch) {
-            return true;
-        }
-
-        return $expr instanceof Expr\ConstFetch
-            && !in_array(strtolower($expr->name->toString()), ['true', 'false', 'null'], true);
-    }
-
-    /**
-     * Index key for a static property or a function-scoped static, matching
-     * the keys the rules look writes up by.
-     */
-    private function writeKeyOf(Expr $expr): ?string
-    {
-        if ($expr instanceof Expr\StaticPropertyFetch && $expr->name instanceof Node\VarLikeIdentifier) {
-            $class = AstHelper::resolveClassReference(
-                $expr->class,
-                $this->currentClassName(),
-                $this->currentParentName(),
-            );
-
-            return $class === null ? null : PropertyShape::makeWriteKey($class, $expr->name->toString());
-        }
-
-        if ($expr instanceof Expr\Variable && is_string($expr->name)) {
-            $scope = $this->currentFunction();
-
-            return $scope instanceof FunctionScope && $scope->hasStaticLocal($expr->name)
-                ? '$' . $expr->name
-                : null;
-        }
-
-        return null;
     }
 
     private function enterClassLike(Stmt\ClassLike $node): void
@@ -640,10 +511,9 @@ final class IndexCollectingVisitor extends NodeVisitorAbstract
         }
 
         $literalKey = $dimension['literalKey'] ?? false;
-        $keyExpression = $dimension['keyExpression'] ?? null;
 
         if ($base instanceof Expr\StaticPropertyFetch) {
-            $this->recordStaticPropertyWrite($base, $effective, $node, $literalKey, $keyExpression);
+            $this->recordStaticPropertyWrite($base, $effective, $node, $literalKey);
 
             return;
         }
@@ -658,10 +528,7 @@ final class IndexCollectingVisitor extends NodeVisitorAbstract
             $scope = $this->currentFunction();
 
             if ($scope instanceof FunctionScope && $scope->hasStaticLocal($base->name)) {
-                $scope->recordStaticLocalWrite(
-                    $base->name,
-                    $this->makeWrite($effective, $node, $literalKey, $keyExpression),
-                );
+                $scope->recordStaticLocalWrite($base->name, $this->makeWrite($effective, $node, $literalKey));
             }
         }
     }
@@ -674,7 +541,7 @@ final class IndexCollectingVisitor extends NodeVisitorAbstract
      * constant: `self::$x['bucket'][] = …` writes a fixed outer key but still
      * grows the nested array without bound.
      *
-     * @return array{kind: WriteKind, literalKey: bool, keyExpression: string|null}|null
+     * @return array{kind: WriteKind, literalKey: bool}|null
      */
     private function dimensionWrite(Expr\ArrayDimFetch $target, Expr $base): ?array
     {
@@ -714,9 +581,6 @@ final class IndexCollectingVisitor extends NodeVisitorAbstract
         return [
             'kind' => $rootDimension === null ? WriteKind::Append : WriteKind::KeyedWrite,
             'literalKey' => $literalKey,
-            'keyExpression' => $rootDimension === null
-                ? null
-                : $this->file->identitySource($rootDimension->getStartFilePos(), $rootDimension->getEndFilePos()),
         ];
     }
 
@@ -744,7 +608,6 @@ final class IndexCollectingVisitor extends NodeVisitorAbstract
         WriteKind $kind,
         Node $node,
         bool $literalKey = false,
-        ?string $keyExpression = null,
     ): void {
         if (!$fetch->name instanceof Node\VarLikeIdentifier) {
             return;
@@ -762,11 +625,7 @@ final class IndexCollectingVisitor extends NodeVisitorAbstract
 
         $property = $fetch->name->toString();
 
-        $this->index->addStaticWrite(
-            $class,
-            $property,
-            $this->makeWrite($kind, $node, $literalKey, $keyExpression),
-        );
+        $this->index->addStaticWrite($class, $property, $this->makeWrite($kind, $node, $literalKey));
         $this->currentFunction()?->recordStaticPropertyAssignment($property);
     }
 
@@ -783,40 +642,12 @@ final class IndexCollectingVisitor extends NodeVisitorAbstract
         $this->currentFunction()?->recordInstancePropertyAssignment($fetch->name->toString());
     }
 
-    /**
-     * Guards in effect here: everything pushed since the last `else` barrier.
-     *
-     * @return list<string>
-     */
-    private function activeSizeGuards(): array
+    private function makeWrite(WriteKind $kind, Node $node, bool $literalKey = false): StateWrite
     {
-        $active = [];
-
-        foreach ($this->sizeGuardStack as $entry) {
-            if ($entry === null) {
-                $active = [];
-
-                continue;
-            }
-
-            $active[] = $entry;
-        }
-
-        return $active;
-    }
-
-    private function makeWrite(
-        WriteKind $kind,
-        Node $node,
-        bool $literalKey = false,
-        ?string $keyExpression = null,
-    ): StateWrite {
         $location = AstHelper::location($node, $this->file);
         $scope = $this->currentFunction();
         $methodScope = $scope instanceof FunctionScope ? ($scope->methodScope ?? $scope) : null;
         $methodName = $methodScope?->name;
-
-        $inLoop = $this->loopDepth > 0;
 
         return new StateWrite(
             $kind,
@@ -827,12 +658,9 @@ final class IndexCollectingVisitor extends NodeVisitorAbstract
             $methodName !== null && strtolower($methodName) === '__construct',
             $methodName !== null && NameHeuristics::looksLikeReset($methodName),
             $literalKey,
-            $inLoop,
-            !$inLoop
+            $this->loopDepth === 0
                 && $this->conditionalDepth === 0
                 && !($scope instanceof FunctionScope && $scope->sawEarlyExit),
-            $this->activeSizeGuards(),
-            $keyExpression,
         );
     }
 

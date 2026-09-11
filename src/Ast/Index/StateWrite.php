@@ -20,45 +20,8 @@ final class StateWrite
         public readonly bool $inConstructor = false,
         public readonly bool $inResetMethod = false,
         public readonly bool $literalKey = false,
-        public readonly bool $inLoop = false,
         public readonly bool $guaranteed = true,
-        /** @var list<string> collections whose size provably guards this write */
-        public readonly array $sizeGuardedKeys = [],
-        public readonly ?string $keyExpression = null,
     ) {
-    }
-
-    /**
-     * True when this write only runs once the named collection has exceeded a
-     * finite limit — the eviction half of a bounded cache.
-     */
-    public function boundsCollection(string $key): bool
-    {
-        return in_array($key, $this->sizeGuardedKeys, true);
-    }
-
-    /**
-     * True when both writes address the same array key, so one provably undoes
-     * the other.
-     */
-    public function targetsSameKeyAs(self $other): bool
-    {
-        return $this->keyExpression !== null && $this->keyExpression === $other->keyExpression;
-    }
-
-    /**
-     * True when the write can add an unpredictable number of entries.
-     *
-     * `self::$x['last'] = …` always targets the same slot, so it grows the
-     * array to a fixed size rather than without bound.
-     */
-    public function growsUnbounded(): bool
-    {
-        if (!$this->isGrowth()) {
-            return false;
-        }
-
-        return !($this->kind === WriteKind::KeyedWrite && $this->literalKey);
     }
 
     public function isClearing(): bool
@@ -69,5 +32,21 @@ final class StateWrite
     public function isGrowth(): bool
     {
         return $this->kind->isGrowth();
+    }
+
+    /**
+     * True when the write can add an unpredictable number of entries.
+     *
+     * A keyed write whose every dimension is a compile-time constant always
+     * targets the same slot, so it grows the collection to a fixed size rather
+     * than without bound.
+     */
+    public function growsUnbounded(): bool
+    {
+        if (!$this->isGrowth()) {
+            return false;
+        }
+
+        return !($this->kind === WriteKind::KeyedWrite && $this->literalKey);
     }
 }

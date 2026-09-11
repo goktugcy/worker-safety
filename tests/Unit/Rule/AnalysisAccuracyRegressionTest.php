@@ -127,7 +127,7 @@ final class AnalysisAccuracyRegressionTest extends TestCase
         $result = $this->builtIn('Regression/collection-bounds.php');
 
         // Reported at the declaration; `unbounded()` appends with no eviction.
-        $this->assertHasFinding($result, RuleId::STATIC_COLLECTION_GROWTH, 22, Severity::High);
+        $this->assertHasFinding($result, RuleId::STATIC_COLLECTION_GROWTH, 22, Severity::Medium);
     }
 
     public function test_a_literal_key_bounds_the_collection(): void
@@ -143,13 +143,23 @@ final class AnalysisAccuracyRegressionTest extends TestCase
         }
     }
 
-    public function test_unsetting_a_static_local_entry_stays_a_clearing_write(): void
+    /**
+     * Add-then-remove of the same key really is bounded, but proving it needs
+     * the order of the two writes and the runtime value of the key. The rule
+     * reports it at MEDIUM rather than claiming a bound it cannot show.
+     */
+    public function test_an_unprovable_add_remove_pair_is_reported_at_medium(): void
     {
         $result = $this->builtIn('Regression/collection-bounds.php');
 
-        foreach (self::findingsFor($result, RuleId::STATIC_COLLECTION_GROWTH) as $finding) {
-            self::assertNotSame('items', $finding->symbol->variable);
-        }
+        $local = array_values(array_filter(
+            self::findingsFor($result, RuleId::STATIC_COLLECTION_GROWTH),
+            static fn (Finding $f): bool => $f->symbol->variable === 'items',
+        ));
+
+        self::assertCount(1, $local);
+        self::assertSame(Severity::Medium, $local[0]->severity);
+        self::assertStringContainsString('not a provable bound', $local[0]->message);
     }
 
     public function test_an_aliased_import_is_still_the_builtin_function(): void
@@ -224,15 +234,22 @@ final class AnalysisAccuracyRegressionTest extends TestCase
     {
         self::assertSame(
             [
+                'AddThenRemove',
                 'ConditionalRemoval',
+                'EvictionBehindASecondCondition',
                 'GrowthInLoop',
                 'ImpossibleCountGuard',
+                'InfiniteLimit',
                 'NetGrowth',
                 'PushesTwoPopsOne',
+                'ReassignedKey',
                 'RemovalAfterEarlyReturn',
+                'RemovalBeforeAddition',
                 'ShortCircuitRemoval',
+                'SizeGuarded',
                 'UnrelatedCountGuard',
                 'UnsetsAnotherKey',
+                'UnsetsMissingKeyUnderGuard',
             ],
             $this->grownClasses('Regression/growth-bounds.php'),
         );
@@ -270,9 +287,25 @@ final class AnalysisAccuracyRegressionTest extends TestCase
         self::assertContains('ShortCircuitRemoval', $this->grownClasses('Regression/growth-bounds.php'));
     }
 
-    public function test_a_size_guarded_eviction_is_a_bound(): void
+    /**
+     * A size-guarded eviction is the idiom a bounded cache uses, but the code
+     * alone does not show that the removal runs on every path, removes as much
+     * as was added, or that the limit is finite. It is reported at MEDIUM.
+     */
+    public function test_a_size_guarded_eviction_is_reported_at_medium(): void
     {
-        self::assertNotContains('SizeGuarded', $this->grownClasses('Regression/growth-bounds.php'));
+        $reported = self::findingsFor(
+            $this->builtIn('Regression/growth-bounds.php'),
+            RuleId::STATIC_COLLECTION_GROWTH,
+        );
+
+        $guarded = array_values(array_filter(
+            $reported,
+            static fn (Finding $f): bool => str_ends_with((string) $f->symbol->class, 'SizeGuarded'),
+        ));
+
+        self::assertCount(1, $guarded);
+        self::assertSame(Severity::Medium, $guarded[0]->severity);
     }
 
     public function test_an_unconditional_full_reset_is_a_bound(): void
@@ -280,9 +313,13 @@ final class AnalysisAccuracyRegressionTest extends TestCase
         self::assertNotContains('FullReset', $this->grownClasses('Regression/growth-bounds.php'));
     }
 
-    public function test_an_unconditional_add_and_remove_pair_is_a_bound(): void
+    public function test_only_a_full_reset_is_treated_as_a_proof(): void
     {
-        self::assertNotContains('AddThenRemove', $this->grownClasses('Regression/growth-bounds.php'));
+        $reported = $this->grownClasses('Regression/growth-bounds.php');
+
+        self::assertNotContains('FullReset', $reported, 'An unconditional full reset is provable.');
+        self::assertContains('AddThenRemove', $reported, 'Everything else is reported.');
+        self::assertContains('SizeGuarded', $reported);
     }
 
     public function test_container_keys_are_matched_byte_for_byte(): void

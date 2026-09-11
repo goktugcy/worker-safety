@@ -7,6 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed — fourth release review
+
+`WS008` no longer claims bounds it cannot prove. Two suppression paths are gone
+rather than tightened again, because each needed information that the shape of
+the code does not carry:
+
+- The **size-guarded eviction** path is removed. Verifying the guard's target,
+  direction and limit still left it blind to an eviction behind a second
+  condition, to a removal that takes out a key that was never added, to one
+  write site that adds two elements, and to `INF` as a "finite" limit.
+- The **same-key add/remove** path is removed. Matching the key text cannot see
+  that the removal runs *before* the addition, or that the variable holding the
+  key was reassigned in between.
+
+What remains is the one provable shape: an unconditional reset of the whole
+collection in the function that grows it. Everything else is reported —
+`HIGH` when there is no removal at all, `MEDIUM` when removals exist but bound
+nothing verifiable, with a message that says so and points at the inline ignore
+for a trade-off you have reviewed. The `examples/leaky-app` LRU now carries such
+an ignore, which is the workflow this is meant to have.
+
+This makes the rule noisier on correct bounded caches and no longer silent on
+six broken ones. The guard-tracking machinery (`sizeGuardedKeys`,
+`keyExpression`, the guard stack and the finite-limit check) is deleted, so
+there is less code and nothing left to mis-verify.
+
 ### Fixed — third release review
 
 - `WS008`: a size guard is now verified rather than detected. The condition has
