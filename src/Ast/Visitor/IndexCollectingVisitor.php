@@ -8,12 +8,10 @@ use PhpParser\Node;
 use PhpParser\Node\Expr;
 use PhpParser\Node\Identifier;
 use PhpParser\Node\Stmt;
-use PhpParser\NodeFinder;
 use PhpParser\NodeVisitorAbstract;
 use WorkerSafety\Ast\AstHelper;
 use WorkerSafety\Ast\Index\BindingContext;
 use WorkerSafety\Ast\Index\ClassKind;
-use WorkerSafety\Ast\Index\ContainerAlias;
 use WorkerSafety\Ast\Index\ContainerBindingCollector;
 use WorkerSafety\Ast\Index\MethodShape;
 use WorkerSafety\Ast\Index\ProjectIndex;
@@ -66,9 +64,14 @@ final class IndexCollectingVisitor extends NodeVisitorAbstract
 
     private int $conditionalDepth = 0;
 
-    private int $sizeGuardDepth = 0;
-
-    private readonly NodeFinder $nodeFinder;
+    /**
+     * Keys of the collections whose size guards the code currently being
+     * visited. `null` is a barrier: an `else` branch does not inherit the
+     * guard from its own `if`.
+     *
+     * @var list<string|null>
+     */
+    private array $sizeGuardStack = [];
 
     /**
      * @param list<ContainerBindingCollector> $bindingCollectors
@@ -78,7 +81,6 @@ final class IndexCollectingVisitor extends NodeVisitorAbstract
         private readonly SourceFile $file,
         private readonly array $bindingCollectors = [],
     ) {
-        $this->nodeFinder = new NodeFinder();
     }
 
     public function beforeTraverse(array $nodes): ?array
@@ -87,7 +89,7 @@ final class IndexCollectingVisitor extends NodeVisitorAbstract
         $this->functionStack = [];
         $this->loopDepth = 0;
         $this->conditionalDepth = 0;
-        $this->sizeGuardDepth = 0;
+        $this->sizeGuardStack = [];
 
         return null;
     }
@@ -196,8 +198,17 @@ final class IndexCollectingVisitor extends NodeVisitorAbstract
             ++$this->conditionalDepth;
         }
 
-        if ($this->guardsOnSize($node)) {
-            ++$this->sizeGuardDepth;
+        // An `else` must not inherit its own `if`'s size guard.
+        if ($node instanceof Stmt\Else_) {
+            $this->sizeGuardStack[] = null;
+
+            return;
+        }
+
+        $guarded = $this->sizeGuardTarget($node);
+
+        if ($guarded !== null) {
+            $this->sizeGuardStack[] = $guarded;
         }
     }
 
@@ -209,8 +220,8 @@ final class IndexCollectingVisitor extends NodeVisitorAbstract
             --$this->conditionalDepth;
         }
 
-        if ($this->guardsOnSize($node)) {
-            --$this->sizeGuardDepth;
+        if ($node instanceof Stmt\Else_ || $this->sizeGuardTarget($node) !== null) {
+            array_pop($this->sizeGuardStack);
         }
 
         // Set on leave, so the returned expression itself still counts as
@@ -244,34 +255,117 @@ final class IndexCollectingVisitor extends NodeVisitorAbstract
             || $node instanceof Stmt\TryCatch
             || $node instanceof Stmt\Catch_
             || $node instanceof Expr\Match_
-            || $node instanceof Expr\Ternary;
+            || $node instanceof Expr\Ternary
+            // `$evict && array_pop(...)` only evaluates its right operand
+            // sometimes, so nothing inside is guaranteed to run.
+            || $node instanceof Expr\BinaryOp\BooleanAnd
+            || $node instanceof Expr\BinaryOp\BooleanOr
+            || $node instanceof Expr\BinaryOp\LogicalAnd
+            || $node instanceof Expr\BinaryOp\LogicalOr
+            || $node instanceof Expr\BinaryOp\Coalesce;
     }
 
     /**
-     * True for `if (count(self::$x) > N)` and `while (count(...) > N)`: the
-     * shape that actually bounds an eviction.
+     * The collection whose size bounds the branch this node opens, if any.
+     *
+     * Only the shape that genuinely proves an upper bound counts:
+     * `count($collection) > <finite limit>` (in either operand order) on an
+     * `if`/`elseif`/`while`, with the guarded code in the branch taken when the
+     * limit is exceeded. A `count()` call somewhere in the condition is not
+     * enough — `count([]) > 10` and `count(self::$x) < 0` prove nothing.
      */
-    private function guardsOnSize(Node $node): bool
+    private function sizeGuardTarget(Node $node): ?string
     {
         $condition = match (true) {
             $node instanceof Stmt\If_,
             $node instanceof Stmt\ElseIf_,
-            $node instanceof Stmt\While_,
-            $node instanceof Stmt\Do_ => $node->cond,
+            $node instanceof Stmt\While_ => $node->cond,
             default => null,
         };
 
         if ($condition === null) {
-            return false;
+            return null;
         }
 
-        foreach ($this->nodeFinder->findInstanceOf($condition, Expr\FuncCall::class) as $call) {
-            if (in_array(AstHelper::functionName($call), ['count', 'sizeof'], true)) {
-                return true;
-            }
+        // count($x) > N / count($x) >= N
+        if ($condition instanceof Expr\BinaryOp\Greater || $condition instanceof Expr\BinaryOp\GreaterOrEqual) {
+            return $this->countedCollection($condition->left, $condition->right);
         }
 
-        return false;
+        // N < count($x) / N <= count($x)
+        if ($condition instanceof Expr\BinaryOp\Smaller || $condition instanceof Expr\BinaryOp\SmallerOrEqual) {
+            return $this->countedCollection($condition->right, $condition->left);
+        }
+
+        return null;
+    }
+
+    /**
+     * Resolve `count($collection)` compared against a finite limit.
+     */
+    private function countedCollection(Expr $countSide, Expr $limitSide): ?string
+    {
+        if (!$countSide instanceof Expr\FuncCall
+            || !in_array(AstHelper::functionName($countSide), ['count', 'sizeof'], true)
+        ) {
+            return null;
+        }
+
+        if (!self::isFiniteLimit($limitSide)) {
+            return null;
+        }
+
+        $first = $countSide->args[0] ?? null;
+
+        if (!$first instanceof Node\Arg) {
+            return null;
+        }
+
+        return $this->writeKeyOf($first->value);
+    }
+
+    /**
+     * A limit that is known to be finite at compile time.
+     */
+    private static function isFiniteLimit(Expr $expr): bool
+    {
+        if ($expr instanceof Node\Scalar\Int_ || $expr instanceof Node\Scalar\Float_) {
+            return true;
+        }
+
+        if ($expr instanceof Expr\ClassConstFetch) {
+            return true;
+        }
+
+        return $expr instanceof Expr\ConstFetch
+            && !in_array(strtolower($expr->name->toString()), ['true', 'false', 'null'], true);
+    }
+
+    /**
+     * Index key for a static property or a function-scoped static, matching
+     * the keys the rules look writes up by.
+     */
+    private function writeKeyOf(Expr $expr): ?string
+    {
+        if ($expr instanceof Expr\StaticPropertyFetch && $expr->name instanceof Node\VarLikeIdentifier) {
+            $class = AstHelper::resolveClassReference(
+                $expr->class,
+                $this->currentClassName(),
+                $this->currentParentName(),
+            );
+
+            return $class === null ? null : PropertyShape::makeWriteKey($class, $expr->name->toString());
+        }
+
+        if ($expr instanceof Expr\Variable && is_string($expr->name)) {
+            $scope = $this->currentFunction();
+
+            return $scope instanceof FunctionScope && $scope->hasStaticLocal($expr->name)
+                ? '$' . $expr->name
+                : null;
+        }
+
+        return null;
     }
 
     private function enterClassLike(Stmt\ClassLike $node): void
@@ -546,9 +640,10 @@ final class IndexCollectingVisitor extends NodeVisitorAbstract
         }
 
         $literalKey = $dimension['literalKey'] ?? false;
+        $keyExpression = $dimension['keyExpression'] ?? null;
 
         if ($base instanceof Expr\StaticPropertyFetch) {
-            $this->recordStaticPropertyWrite($base, $effective, $node, $literalKey);
+            $this->recordStaticPropertyWrite($base, $effective, $node, $literalKey, $keyExpression);
 
             return;
         }
@@ -563,7 +658,10 @@ final class IndexCollectingVisitor extends NodeVisitorAbstract
             $scope = $this->currentFunction();
 
             if ($scope instanceof FunctionScope && $scope->hasStaticLocal($base->name)) {
-                $scope->recordStaticLocalWrite($base->name, $this->makeWrite($effective, $node, $literalKey));
+                $scope->recordStaticLocalWrite(
+                    $base->name,
+                    $this->makeWrite($effective, $node, $literalKey, $keyExpression),
+                );
             }
         }
     }
@@ -576,7 +674,7 @@ final class IndexCollectingVisitor extends NodeVisitorAbstract
      * constant: `self::$x['bucket'][] = …` writes a fixed outer key but still
      * grows the nested array without bound.
      *
-     * @return array{kind: WriteKind, literalKey: bool}|null
+     * @return array{kind: WriteKind, literalKey: bool, keyExpression: string|null}|null
      */
     private function dimensionWrite(Expr\ArrayDimFetch $target, Expr $base): ?array
     {
@@ -616,6 +714,9 @@ final class IndexCollectingVisitor extends NodeVisitorAbstract
         return [
             'kind' => $rootDimension === null ? WriteKind::Append : WriteKind::KeyedWrite,
             'literalKey' => $literalKey,
+            'keyExpression' => $rootDimension === null
+                ? null
+                : $this->file->identitySource($rootDimension->getStartFilePos(), $rootDimension->getEndFilePos()),
         ];
     }
 
@@ -643,6 +744,7 @@ final class IndexCollectingVisitor extends NodeVisitorAbstract
         WriteKind $kind,
         Node $node,
         bool $literalKey = false,
+        ?string $keyExpression = null,
     ): void {
         if (!$fetch->name instanceof Node\VarLikeIdentifier) {
             return;
@@ -660,7 +762,11 @@ final class IndexCollectingVisitor extends NodeVisitorAbstract
 
         $property = $fetch->name->toString();
 
-        $this->index->addStaticWrite($class, $property, $this->makeWrite($kind, $node, $literalKey));
+        $this->index->addStaticWrite(
+            $class,
+            $property,
+            $this->makeWrite($kind, $node, $literalKey, $keyExpression),
+        );
         $this->currentFunction()?->recordStaticPropertyAssignment($property);
     }
 
@@ -677,8 +783,34 @@ final class IndexCollectingVisitor extends NodeVisitorAbstract
         $this->currentFunction()?->recordInstancePropertyAssignment($fetch->name->toString());
     }
 
-    private function makeWrite(WriteKind $kind, Node $node, bool $literalKey = false): StateWrite
+    /**
+     * Guards in effect here: everything pushed since the last `else` barrier.
+     *
+     * @return list<string>
+     */
+    private function activeSizeGuards(): array
     {
+        $active = [];
+
+        foreach ($this->sizeGuardStack as $entry) {
+            if ($entry === null) {
+                $active = [];
+
+                continue;
+            }
+
+            $active[] = $entry;
+        }
+
+        return $active;
+    }
+
+    private function makeWrite(
+        WriteKind $kind,
+        Node $node,
+        bool $literalKey = false,
+        ?string $keyExpression = null,
+    ): StateWrite {
         $location = AstHelper::location($node, $this->file);
         $scope = $this->currentFunction();
         $methodScope = $scope instanceof FunctionScope ? ($scope->methodScope ?? $scope) : null;
@@ -699,7 +831,8 @@ final class IndexCollectingVisitor extends NodeVisitorAbstract
             !$inLoop
                 && $this->conditionalDepth === 0
                 && !($scope instanceof FunctionScope && $scope->sawEarlyExit),
-            $this->sizeGuardDepth > 0,
+            $this->activeSizeGuards(),
+            $keyExpression,
         );
     }
 
@@ -724,14 +857,8 @@ final class IndexCollectingVisitor extends NodeVisitorAbstract
         );
 
         foreach ($this->bindingCollectors as $collector) {
-            foreach ($collector->collect($node, $context) as $registration) {
-                if ($registration instanceof ContainerAlias) {
-                    $this->index->addAlias($registration);
-
-                    continue;
-                }
-
-                $this->index->addBinding($registration);
+            foreach ($collector->collect($node, $context) as $binding) {
+                $this->index->addBinding($binding);
             }
         }
     }

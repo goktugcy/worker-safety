@@ -76,7 +76,7 @@ final class StaticCollectionGrowthRule extends AbstractRule
         }
 
         $writes = $context->index()->writesForProperty($property);
-        $verdict = $this->judge($writes);
+        $verdict = $this->judge($writes, $property->writeKey());
 
         if ($verdict === null) {
             return null;
@@ -105,7 +105,7 @@ final class StaticCollectionGrowthRule extends AbstractRule
             return null;
         }
 
-        $verdict = $this->judge($local->writes);
+        $verdict = $this->judge($local->writes, '$' . $local->name);
 
         if ($verdict === null) {
             return null;
@@ -133,10 +133,11 @@ final class StaticCollectionGrowthRule extends AbstractRule
 
     /**
      * @param list<StateWrite> $writes
+     * @param string $key index key of the collection being judged
      *
      * @return array{0: Severity, 1: StateWrite}|null
      */
-    private function judge(array $writes): ?array
+    private function judge(array $writes, string $key): ?array
     {
         // A keyed write whose every dimension is a fixed key targets a fixed
         // slot, so it cannot grow the collection without bound.
@@ -154,7 +155,7 @@ final class StaticCollectionGrowthRule extends AbstractRule
 
         $unbounded = array_values(array_filter(
             $growth,
-            fn (StateWrite $w): bool => !$this->scopeIsBounded(self::scopeOf($w), $growth, $clearing),
+            fn (StateWrite $w): bool => !$this->scopeIsBounded(self::scopeOf($w), $growth, $clearing, $key),
         ));
 
         if ($unbounded === []) {
@@ -175,70 +176,101 @@ final class StaticCollectionGrowthRule extends AbstractRule
     /**
      * Whether the growth in one function is provably bounded.
      *
-     * Counting appends against removals is only sound when every one of them
-     * runs exactly once per call, so the bound has to be *proven*, not
-     * inferred. Three shapes qualify, and anything else keeps the warning:
+     * The bar is a proof, not a plausible-looking pairing, because silencing
+     * the rule wrongly hides a real leak. Exactly three shapes qualify:
      *
-     *  1. an unconditional full reset (`self::$x = []`) — the collection
-     *     cannot carry anything over from an earlier call;
-     *  2. every growth and every removal guaranteed to run, with at least as
-     *     many removals as additions — net non-positive per call;
-     *  3. a single addition paired with a size-guarded eviction
-     *     (`if (count(self::$x) > N) array_shift(...)`) — the LRU idiom.
+     *  1. an unconditional reset of the whole collection — nothing survives to
+     *     the next call;
+     *  2. every addition matched by a removal of the *same* array key, with
+     *     both guaranteed to run;
+     *  3. one addition plus an eviction guarded by a genuine upper bound on
+     *     *this* collection — `if (count(self::$x) > <finite limit>)`.
      *
-     * A write inside a loop, behind a condition, or after an early return
-     * proves nothing, so none of the three can rely on it.
+     * Anything else — a write in a loop, behind a condition, after an early
+     * return, on the right of `&&`, an unrelated `count()`, a comparison that
+     * cannot bound anything, or a removal whose key may not exist — leaves the
+     * warning in place.
      *
      * @param list<StateWrite> $growth
      * @param list<StateWrite> $clearing
      */
-    private function scopeIsBounded(string $scope, array $growth, array $clearing): bool
+    private function scopeIsBounded(string $scope, array $growth, array $clearing, string $key): bool
     {
-        $growthHere = array_values(array_filter(
-            $growth,
-            static fn (StateWrite $w): bool => self::scopeOf($w) === $scope,
-        ));
-        $clearingHere = array_values(array_filter(
-            $clearing,
-            static fn (StateWrite $w): bool => self::scopeOf($w) === $scope,
-        ));
+        $growthHere = self::inScope($growth, $scope);
+        $clearingHere = self::inScope($clearing, $scope);
 
         if ($clearingHere === []) {
             return false;
         }
 
-        // (1) An unconditional full reset.
+        // (1) An unconditional reset of the whole collection.
         foreach ($clearingHere as $write) {
             if ($write->kind->isFullRelease() && $write->guaranteed) {
                 return true;
             }
         }
 
-        // (2) Provably net non-positive: every write runs exactly once.
-        $allGuaranteed = true;
-
-        foreach ([...$growthHere, ...$clearingHere] as $write) {
-            if (!$write->guaranteed) {
-                $allGuaranteed = false;
-
-                break;
-            }
-        }
-
-        if ($allGuaranteed && count($clearingHere) >= count($growthHere)) {
+        // (2) Every addition undone by a removal of the same key.
+        if (self::everyGrowthIsUndone($growthHere, $clearingHere)) {
             return true;
         }
 
-        // (3) One addition, evicted under a size check.
+        // (3) A single addition, evicted once this collection exceeds a limit.
         if (count($growthHere) === 1 && !$growthHere[0]->inLoop) {
             foreach ($clearingHere as $write) {
-                if ($write->sizeGuarded) {
+                if ($write->boundsCollection($key)) {
                     return true;
                 }
             }
         }
 
         return false;
+    }
+
+    /**
+     * @param list<StateWrite> $growth
+     * @param list<StateWrite> $clearing
+     */
+    private static function everyGrowthIsUndone(array $growth, array $clearing): bool
+    {
+        if ($growth === []) {
+            return false;
+        }
+
+        foreach ($growth as $addition) {
+            if (!$addition->guaranteed || $addition->keyExpression === null) {
+                return false;
+            }
+
+            $undone = false;
+
+            foreach ($clearing as $removal) {
+                if ($removal->guaranteed && $removal->targetsSameKeyAs($addition)) {
+                    $undone = true;
+
+                    break;
+                }
+            }
+
+            if (!$undone) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    /**
+     * @param list<StateWrite> $writes
+     *
+     * @return list<StateWrite>
+     */
+    private static function inScope(array $writes, string $scope): array
+    {
+        return array_values(array_filter(
+            $writes,
+            static fn (StateWrite $w): bool => self::scopeOf($w) === $scope,
+        ));
     }
 
     /**

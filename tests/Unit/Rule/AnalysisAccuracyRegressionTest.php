@@ -223,9 +223,51 @@ final class AnalysisAccuracyRegressionTest extends TestCase
     public function test_only_a_provable_bound_silences_the_growth_warning(): void
     {
         self::assertSame(
-            ['ConditionalRemoval', 'GrowthInLoop', 'NetGrowth', 'RemovalAfterEarlyReturn'],
+            [
+                'ConditionalRemoval',
+                'GrowthInLoop',
+                'ImpossibleCountGuard',
+                'NetGrowth',
+                'PushesTwoPopsOne',
+                'RemovalAfterEarlyReturn',
+                'ShortCircuitRemoval',
+                'UnrelatedCountGuard',
+                'UnsetsAnotherKey',
+            ],
             $this->grownClasses('Regression/growth-bounds.php'),
         );
+    }
+
+    /**
+     * A `count()` somewhere in the condition is not a bound. The guard has to
+     * measure this collection and compare it against a finite limit in the
+     * direction that makes the eviction run when the limit is exceeded.
+     */
+    public function test_a_count_call_is_not_by_itself_a_size_guard(): void
+    {
+        $reported = $this->grownClasses('Regression/growth-bounds.php');
+
+        self::assertContains('UnrelatedCountGuard', $reported, 'count([]) measures nothing.');
+        self::assertContains('ImpossibleCountGuard', $reported, 'count(x) < 0 can never evict.');
+    }
+
+    public function test_removing_a_different_key_is_not_a_bound(): void
+    {
+        self::assertContains('UnsetsAnotherKey', $this->grownClasses('Regression/growth-bounds.php'));
+    }
+
+    public function test_write_sites_are_not_counted_as_element_counts(): void
+    {
+        self::assertContains(
+            'PushesTwoPopsOne',
+            $this->grownClasses('Regression/growth-bounds.php'),
+            'array_push() with two values adds two entries; array_pop() removes one.',
+        );
+    }
+
+    public function test_a_short_circuit_operand_is_not_guaranteed_to_run(): void
+    {
+        self::assertContains('ShortCircuitRemoval', $this->grownClasses('Regression/growth-bounds.php'));
     }
 
     public function test_a_size_guarded_eviction_is_a_bound(): void
@@ -257,10 +299,22 @@ final class AnalysisAccuracyRegressionTest extends TestCase
         );
     }
 
-    public function test_a_scoped_alias_flushes_the_binding_it_aliases(): void
+    /**
+     * `forgetScopedInstances()` unsets `$instances[$scoped]` with no alias
+     * resolution, and `bind()` deletes `$aliases[$abstract]` for the key it
+     * registers. Scoping an alias therefore never flushes the binding it
+     * aliased, so the singleton still has to be reported.
+     */
+    public function test_a_scoped_alias_does_not_flush_the_binding_it_aliases(): void
     {
-        foreach ($this->laravel('Regression/container-key-identity.php')->findings as $finding) {
-            self::assertStringNotContainsString('AliasedState', $finding->message);
-        }
+        $reported = array_map(
+            static fn (Finding $f): string => trim((string) $f->snippet),
+            self::findingsFor(
+                $this->laravel('Regression/container-key-identity.php'),
+                RuleId::LARAVEL_SINGLETON_MUTABLE_STATE,
+            ),
+        );
+
+        self::assertContains('$app->singleton(AliasedState::class);', $reported);
     }
 }

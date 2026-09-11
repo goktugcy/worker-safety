@@ -10,7 +10,6 @@ use PhpParser\Node\Expr;
 use PhpParser\Node\Identifier;
 use WorkerSafety\Ast\AstHelper;
 use WorkerSafety\Ast\Index\BindingContext;
-use WorkerSafety\Ast\Index\ContainerAlias;
 use WorkerSafety\Ast\Index\ContainerBinding;
 use WorkerSafety\Ast\Index\ContainerBindingCollector;
 use WorkerSafety\Ast\Visitor\FirstInstantiationFinder;
@@ -62,12 +61,12 @@ final class LaravelContainerBindingCollector implements ContainerBindingCollecto
             return;
         }
 
-        if ($binding instanceof ContainerBinding || $binding instanceof ContainerAlias) {
+        if ($binding instanceof ContainerBinding) {
             yield $binding;
         }
     }
 
-    private function fromMethodCall(Expr\MethodCall $node, BindingContext $context): ContainerBinding|ContainerAlias|null
+    private function fromMethodCall(Expr\MethodCall $node, BindingContext $context): ?ContainerBinding
     {
         if (!$node->name instanceof Identifier || !$this->isContainerExpression($node->var)) {
             return null;
@@ -76,7 +75,7 @@ final class LaravelContainerBindingCollector implements ContainerBindingCollecto
         return $this->build($node->name->toString(), array_values($node->args), $node, $context);
     }
 
-    private function fromStaticCall(Expr\StaticCall $node, BindingContext $context): ContainerBinding|ContainerAlias|null
+    private function fromStaticCall(Expr\StaticCall $node, BindingContext $context): ?ContainerBinding
     {
         if (!$node->name instanceof Identifier || !$node->class instanceof Node\Name) {
             return null;
@@ -97,16 +96,8 @@ final class LaravelContainerBindingCollector implements ContainerBindingCollecto
     /**
      * @param list<Arg|Node\VariadicPlaceholder> $args
      */
-    private function build(
-        string $method,
-        array $args,
-        Node $node,
-        BindingContext $context,
-    ): ContainerBinding|ContainerAlias|null {
-        if (strtolower($method) === 'alias') {
-            return $this->buildAlias($args, $node, $context);
-        }
-
+    private function build(string $method, array $args, Node $node, BindingContext $context): ?ContainerBinding
+    {
         $descriptor = self::BINDING_METHODS[strtolower($method)] ?? null;
 
         if ($descriptor === null) {
@@ -153,30 +144,6 @@ final class LaravelContainerBindingCollector implements ContainerBindingCollecto
             $abstractIsClass,
             $context->file->identitySource($node->getStartFilePos(), $node->getEndFilePos()),
         );
-    }
-
-    /**
-     * `$app->alias($abstract, $alias)`.
-     *
-     * @param list<Arg|Node\VariadicPlaceholder> $args
-     */
-    private function buildAlias(array $args, Node $node, BindingContext $context): ?ContainerAlias
-    {
-        $abstractArg = $this->argument($args, 0, 'abstract');
-        $aliasArg = $this->argument($args, 1, 'alias');
-
-        if ($abstractArg === null || $aliasArg === null) {
-            return null;
-        }
-
-        $abstract = AstHelper::containerKeyFromExpr($abstractArg, $context->currentClass, $context->parentClass);
-        $alias = AstHelper::containerKeyFromExpr($aliasArg, $context->currentClass, $context->parentClass);
-
-        if ($abstract === null || $alias === null) {
-            return null;
-        }
-
-        return new ContainerAlias($abstract[0], $alias[0], AstHelper::location($node, $context->file));
     }
 
     private function resolveConcrete(Expr $expr, BindingContext $context): ?string

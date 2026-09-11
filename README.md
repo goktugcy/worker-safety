@@ -170,9 +170,17 @@ vendor/bin/worker-safety rules --format=json
   match; `$userTable`, `$defaultLocale` and `UserRepository` do not, because
   configuration and infrastructure vocabulary neutralises the match.
 - **A release path lowers the severity instead of hiding the finding.** A static
-  cache cleared only by a `flush()` method is `MEDIUM`, one with no release path
-  at all is `HIGH`, and one that evicts inside the method that fills it is not
-  reported.
+  cache cleared only by a `flush()` method is `MEDIUM`, and one with no release
+  path at all is `HIGH`.
+- **Silence requires a proof, not a plausible pairing.** WS008 only goes quiet
+  for three shapes: an unconditional reset of the whole collection; every
+  addition matched by a removal of the *same* array key, both guaranteed to
+  run; or one addition plus an eviction guarded by a real upper bound on that
+  collection (`if (count(self::$x) > <finite limit>)`). A write in a loop,
+  behind a condition, after an early return or on the right of `&&` is not
+  guaranteed; an unrelated `count()` or a comparison that can never fire is not
+  a bound. Anything short of a proof keeps the warning, because silencing it
+  wrongly hides a real leak.
 - **The more specific rule wins.** A singleton's instance holder is reported by
   `WS004` alone, so one line never carries two contradictory severities.
 - **Registration in a service provider is not reported.** That is where it
@@ -547,6 +555,15 @@ above a `$_SERVER` one.
 
 Detection is a read of `composer.json` and `composer.lock`. The framework itself
 is never installed, loaded or booted, and Worker Safety does not depend on it.
+
+A `scoped()` registration only silences `WS005`/`WS006` when it uses the **exact
+same container key**. Keys are plain array keys, so `'Shared'` is not `'shared'`,
+and aliases are deliberately not followed: `forgetScopedInstances()` unsets
+`$instances[$key]` without resolving aliases, and `bind()` deletes the alias for
+any key it re-registers — so `alias(Ctx::class, 'a')` plus `scoped('a')` leaves
+the `Ctx::class` singleton alive. This key identity is separate from PHP
+class-name identity, which stays case-insensitive when resolving a bound class
+to its declaration.
 
 ## Security
 

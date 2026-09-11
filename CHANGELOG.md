@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed — third release review
+
+- `WS008`: a size guard is now verified rather than detected. The condition has
+  to measure *this* collection with `count()`/`sizeof()`, compare it against a
+  finite limit, and put the eviction in the branch taken when the limit is
+  exceeded. `count([]) > 10` and `count(self::$x) < 0` no longer silence the
+  rule, and an `else` branch no longer inherits its own `if`'s guard.
+- `WS008`: removals are only counted as undoing an addition when they target
+  the *same* array key, so `unset(self::$items['never'])` after an append no
+  longer passes as a bound. Write sites are never treated as element counts:
+  `array_push($x, $a, $b)` paired with one `array_pop()` is reported.
+- The right operand of `&&`, `||`, `and`, `or` and `??` counts as conditional,
+  so `$evict && array_pop(...)` no longer reads as guaranteed to run.
+- `WS005`/`WS006`: alias-based suppression removed. `forgetScopedInstances()`
+  unsets `$instances[$key]` with no alias resolution and `bind()` deletes
+  `$aliases[$abstract]` for the key it registers, so scoping an alias never
+  flushes the binding it aliased. Only an exact key match suppresses now, and
+  the round-two test that asserted the opposite has been corrected.
+
 ### Fixed — second release review
 
 - `WS008`: a fixed outer key no longer bounds a nested collection.

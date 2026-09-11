@@ -22,8 +22,28 @@ final class StateWrite
         public readonly bool $literalKey = false,
         public readonly bool $inLoop = false,
         public readonly bool $guaranteed = true,
-        public readonly bool $sizeGuarded = false,
+        /** @var list<string> collections whose size provably guards this write */
+        public readonly array $sizeGuardedKeys = [],
+        public readonly ?string $keyExpression = null,
     ) {
+    }
+
+    /**
+     * True when this write only runs once the named collection has exceeded a
+     * finite limit — the eviction half of a bounded cache.
+     */
+    public function boundsCollection(string $key): bool
+    {
+        return in_array($key, $this->sizeGuardedKeys, true);
+    }
+
+    /**
+     * True when both writes address the same array key, so one provably undoes
+     * the other.
+     */
+    public function targetsSameKeyAs(self $other): bool
+    {
+        return $this->keyExpression !== null && $this->keyExpression === $other->keyExpression;
     }
 
     /**

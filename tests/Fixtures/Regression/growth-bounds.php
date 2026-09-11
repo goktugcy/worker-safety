@@ -121,3 +121,79 @@ class AddThenRemove
         unset(self::$items[$key]);
     }
 }
+
+/**
+ * A count() call that measures something else proves nothing.
+ */
+class UnrelatedCountGuard
+{
+    private static array $items = [];
+
+    public static function add(string $value): void
+    {
+        self::$items[] = $value;
+
+        if (count([]) > 10) {
+            array_pop(self::$items);
+        }
+    }
+}
+
+/**
+ * The comparison can never be true, so the eviction never runs.
+ */
+class ImpossibleCountGuard
+{
+    private static array $items = [];
+
+    public static function add(string $value): void
+    {
+        self::$items[] = $value;
+
+        if (count(self::$items) < 0) {
+            array_pop(self::$items);
+        }
+    }
+}
+
+/**
+ * The removed key is never the key that was added.
+ */
+class UnsetsAnotherKey
+{
+    private static array $items = [];
+
+    public static function add(string $value): void
+    {
+        self::$items[] = $value;
+        unset(self::$items['never']);
+    }
+}
+
+/**
+ * array_push() adds two entries, array_pop() removes one: net growth.
+ */
+class PushesTwoPopsOne
+{
+    private static array $items = [];
+
+    public static function add(string $value): void
+    {
+        array_push(self::$items, $value, $value);
+        array_pop(self::$items);
+    }
+}
+
+/**
+ * The right operand of && only runs sometimes.
+ */
+class ShortCircuitRemoval
+{
+    private static array $items = [];
+
+    public static function add(string $value, bool $evict): void
+    {
+        self::$items[] = $value;
+        $evict && array_pop(self::$items);
+    }
+}

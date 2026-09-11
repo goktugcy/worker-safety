@@ -25,10 +25,12 @@ class KeyBindings
         $app->singleton('Shared', CaseSensitiveState::class);
         $app->scoped('shared', CaseSensitiveState::class);
 
-        // The container resolves the alias first, so scoping the alias really
-        // does give this binding a per-request lifetime.
+        // Scoping an alias does NOT give the aliased binding a per-request
+        // lifetime: forgetScopedInstances() unsets $instances['aliased']
+        // without resolving aliases, and bind('aliased', ...) has already
+        // deleted $aliases['aliased']. The singleton survives.
         $app->singleton(AliasedState::class);
         $app->alias(AliasedState::class, 'aliased');
-        $app->scoped('aliased');
+        $app->scoped('aliased', AliasedState::class);
     }
 }

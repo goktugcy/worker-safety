@@ -90,15 +90,18 @@ final class SharedBindingInspector
     }
 
     /**
-     * The container flushes scoped instances by the abstract they are
-     * registered under, so only a scoped registration of *the same key* makes
+     * The container flushes scoped instances by the exact key they were
+     * registered under, so only a scoped registration of that same key makes
      * this binding safe.
      *
-     * Keys are compared the way the container compares them — as plain array
-     * keys, byte for byte, after following any alias chain. `'Shared'` and
-     * `'shared'` are two different services, so a scoped `'shared'` does not
-     * flush a singleton `'Shared'`. This is deliberately not PHP class-name
-     * matching, which is case-insensitive; see ProjectIndex::findClass().
+     * `forgetScopedInstances()` does a plain `unset($this->instances[$scoped])`
+     * with no alias resolution, and `bind()` deletes `$this->aliases[$abstract]`
+     * for the key it registers — so `alias(Ctx::class, 'a')` followed by
+     * `scoped('a')` leaves the `Ctx::class` singleton untouched. Aliases are
+     * therefore deliberately *not* followed here: inferring a shared lifetime
+     * from one would hide a real singleton. Keys are compared byte for byte,
+     * the way array keys are, which is separate from PHP class-name identity
+     * (case-insensitive; see ProjectIndex::findClass()).
      */
     private function hasScopedBinding(ProjectIndex $index, ContainerBinding $binding): bool
     {
@@ -106,14 +109,12 @@ final class SharedBindingInspector
             return false;
         }
 
-        $needle = $index->resolveContainerKey($binding->abstract);
-
         foreach ($index->bindings() as $other) {
             if (!$other->scoped || $other->abstract === null) {
                 continue;
             }
 
-            if ($index->resolveContainerKey($other->abstract) === $needle) {
+            if ($other->abstract === $binding->abstract) {
                 return true;
             }
         }
