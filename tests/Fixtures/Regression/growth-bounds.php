@@ -384,6 +384,10 @@ final class ResetSink
     public function consume(mixed $value): void
     {
     }
+
+    public static function swallow(mixed $value): void
+    {
+    }
 }
 
 /**
@@ -490,8 +494,11 @@ class ResetPastANullsafeDimension
 }
 
 /**
- * The same chain without a nullsafe link: the reset really is unconditional,
- * so this one must stay silent.
+ * The same chain without a nullsafe link. The reset does run here, but it is an
+ * argument to another call rather than a statement, and whether a
+ * sub-expression is reached depends on everything around it. The rule stops
+ * reasoning at that boundary and reports it — a deliberate over-report, in
+ * exchange for not having to enumerate every way an expression can be skipped.
  */
 class ResetPastAPlainChain
 {
@@ -501,5 +508,21 @@ class ResetPastAPlainChain
     {
         self::$items[] = $value;
         $sink->next()->consume(self::$items = []);
+    }
+}
+
+/**
+ * A nullsafe chain that continues into a static call: the receiver lives in the
+ * class position rather than in `->var`, which is one more shape a chain walker
+ * would have had to know about.
+ */
+class ResetPastANullsafeStaticCall
+{
+    private static array $items = [];
+
+    public static function add(string $value, ?ResetChainLink $sink = null): void
+    {
+        self::$items[] = $value;
+        $sink?->next()::swallow(self::$items = []);
     }
 }

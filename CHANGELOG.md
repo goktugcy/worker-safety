@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed — eighth release review
+
+`WS008` now draws the line for a "provable reset" at the statement boundary
+instead of trying to enumerate the ways a sub-expression can be skipped.
+
+A nullsafe chain that continues into a static call —
+`$sink?->next()::consume(self::$items = [])` — put the receiver in the class
+position rather than in `->var`, so the chain walker added in the previous
+round stopped early and the reset counted as unconditional again. That was the
+fourth shape of the same question in as many rounds, so the question itself is
+gone:
+
+- A reset is accepted as proof only when the assignment **is a statement**, not
+  when it sits inside another expression. Whether a sub-expression is evaluated
+  depends on its surroundings — a nullsafe link anywhere in the chain, a
+  short-circuit operator, arguments of a call that never happens — and that set
+  has no closed enumeration.
+- The nullsafe chain walker is therefore deleted, along with its node-type
+  special cases. Less code, and nothing left to extend shape by shape.
+
+The cost is one deliberate over-report: a reset nested in another expression is
+now reported even when it does run. The existing scope, loop, early-exit and
+closure checks are unchanged and still required.
+
 ### Fixed — seventh release review
 
 - `?->` short-circuits the whole chain, not just its own link. A reset written

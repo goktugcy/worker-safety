@@ -65,6 +65,17 @@ final class IndexCollectingVisitor extends NodeVisitorAbstract
     private int $conditionalDepth = 0;
 
     /**
+     * The expression each enclosing `Stmt\Expression` consists of.
+     *
+     * A write is only "statement level" when it *is* one of these, which is
+     * what tells a reset apart from an assignment buried in some other
+     * expression.
+     *
+     * @var list<Expr>
+     */
+    private array $statementExpressions = [];
+
+    /**
      * @param list<ContainerBindingCollector> $bindingCollectors
      */
     public function __construct(
@@ -80,6 +91,7 @@ final class IndexCollectingVisitor extends NodeVisitorAbstract
         $this->functionStack = [];
         $this->loopDepth = 0;
         $this->conditionalDepth = 0;
+        $this->statementExpressions = [];
 
         return null;
     }
@@ -182,6 +194,10 @@ final class IndexCollectingVisitor extends NodeVisitorAbstract
      */
     private function enterControlFlow(Node $node): void
     {
+        if ($node instanceof Stmt\Expression) {
+            $this->statementExpressions[] = $node->expr;
+        }
+
         if (self::isLoop($node)) {
             ++$this->loopDepth;
         } elseif (self::isBranch($node)) {
@@ -192,6 +208,10 @@ final class IndexCollectingVisitor extends NodeVisitorAbstract
 
     private function leaveControlFlow(Node $node): void
     {
+        if ($node instanceof Stmt\Expression) {
+            array_pop($this->statementExpressions);
+        }
+
         if (self::isLoop($node)) {
             --$this->loopDepth;
         } elseif (self::isBranch($node)) {
@@ -242,39 +262,7 @@ final class IndexCollectingVisitor extends NodeVisitorAbstract
             // `$v ??= self::$x = []` only evaluates the right-hand side when
             // the target is unset — which also makes the `??=` write itself
             // conditional.
-            || $node instanceof Expr\AssignOp\Coalesce
-            // `$sink?->consume(self::$x = [])`, and everything further along
-            // the same chain.
-            || self::isShortCircuitedChain($node);
-    }
-
-    /**
-     * True for a node that a nullsafe operator can skip.
-     *
-     * `?->` short-circuits the *whole* chain, not just its own link: when
-     * `$sink` is null in `$sink?->next()->consume(self::$x = [])`, neither
-     * `consume()` nor its arguments are evaluated. So a call or fetch counts as
-     * conditional when any link in the receiver chain leading to it is
-     * nullsafe.
-     */
-    private static function isShortCircuitedChain(Node $node): bool
-    {
-        $current = $node;
-
-        while ($current !== null) {
-            if ($current instanceof Expr\NullsafeMethodCall || $current instanceof Expr\NullsafePropertyFetch) {
-                return true;
-            }
-
-            $current = match (true) {
-                $current instanceof Expr\MethodCall,
-                $current instanceof Expr\PropertyFetch,
-                $current instanceof Expr\ArrayDimFetch => $current->var,
-                default => null,
-            };
-        }
-
-        return false;
+            || $node instanceof Expr\AssignOp\Coalesce;
     }
 
     private function enterClassLike(Stmt\ClassLike $node): void
@@ -701,6 +689,16 @@ final class IndexCollectingVisitor extends NodeVisitorAbstract
         // execution scope, so nothing inside a closure is guaranteed.
         $inClosure = $scope instanceof FunctionScope && $scope->name === null;
 
+        // Only a write that is a statement in its own right can be reasoned
+        // about from its position. Whether a *sub*-expression is evaluated
+        // depends on everything around it — nullsafe chains in any of their
+        // forms, short-circuit operators, arguments of a call that never
+        // happens — so an assignment nested inside another expression is never
+        // treated as guaranteed.
+        $statementLevel = $node instanceof Stmt
+            || ($this->statementExpressions !== []
+                && $this->statementExpressions[count($this->statementExpressions) - 1] === $node);
+
         return new StateWrite(
             $kind,
             $location,
@@ -710,7 +708,8 @@ final class IndexCollectingVisitor extends NodeVisitorAbstract
             $methodName !== null && strtolower($methodName) === '__construct',
             $methodName !== null && NameHeuristics::looksLikeReset($methodName),
             $literalKey,
-            !$inClosure
+            $statementLevel
+                && !$inClosure
                 && $this->loopDepth === 0
                 && $this->conditionalDepth === 0
                 && !($scope instanceof FunctionScope && $scope->sawEarlyExit),

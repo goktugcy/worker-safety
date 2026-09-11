@@ -173,8 +173,11 @@ vendor/bin/worker-safety rules --format=json
   cache cleared only by a `flush()` method is `MEDIUM`, and one with no release
   path at all is `HIGH`.
 - **Silence requires a proof, and only one shape qualifies.** WS008 goes quiet
-  for exactly one pattern: an unconditional reset of the whole collection in the
-  function that grows it, because then nothing can carry over to the next call.
+  for exactly one pattern: a statement that unconditionally resets the whole
+  collection, in the function that grows it, because then nothing can carry over
+  to the next call. It has to be a statement — an assignment nested inside
+  another expression is not accepted, because whether a sub-expression runs
+  depends on everything around it.
   Everything else — including the `if (count($x) > N) array_shift($x)` eviction
   idiom — is reported, at `MEDIUM` rather than `HIGH`, with a message saying the
   removal is there but unproven. Certifying an eviction would mean knowing that

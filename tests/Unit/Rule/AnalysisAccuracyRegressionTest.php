@@ -259,6 +259,8 @@ final class AnalysisAccuracyRegressionTest extends TestCase
                 'ResetPastANullsafeCall',
                 'ResetPastANullsafeDimension',
                 'ResetPastANullsafeProperty',
+                'ResetPastANullsafeStaticCall',
+                'ResetPastAPlainChain',
                 'ResetSkippedByGoto',
                 'ShortCircuitRemoval',
                 'SizeGuarded',
@@ -358,6 +360,7 @@ final class AnalysisAccuracyRegressionTest extends TestCase
                 'ResetPastANullsafeCall',
                 'ResetPastANullsafeProperty',
                 'ResetPastANullsafeDimension',
+                'ResetPastANullsafeStaticCall',
             ] as $class
         ) {
             self::assertSame(
@@ -369,15 +372,29 @@ final class AnalysisAccuracyRegressionTest extends TestCase
     }
 
     /**
-     * The same chain without a nullsafe link really is unconditional, so the
-     * short-circuit handling must not start reporting it.
+     * Proof stops at the statement boundary.
+     *
+     * A reset nested inside another expression is not accepted as proof even
+     * when it does run, because whether a sub-expression is evaluated depends
+     * on its surroundings — a nullsafe link anywhere in the chain, a
+     * short-circuit operator, a call that never happens. Drawing the line at
+     * "is this a statement" closes that whole class of question instead of
+     * enumerating its members, at the cost of over-reporting this shape.
      */
-    public function test_a_plain_chain_still_counts_as_an_unconditional_reset(): void
+    public function test_a_reset_nested_in_another_expression_is_not_accepted_as_proof(): void
     {
-        self::assertNotContains(
-            'ResetPastAPlainChain',
-            $this->grownClasses('Regression/growth-bounds.php'),
+        self::assertSame(
+            Severity::Medium,
+            $this->severityOf('Regression/growth-bounds.php', 'ResetPastAPlainChain'),
         );
+    }
+
+    /**
+     * A reset that is a statement in its own right still counts.
+     */
+    public function test_a_statement_level_reset_is_still_a_bound(): void
+    {
+        self::assertNotContains('FullReset', $this->grownClasses('Regression/growth-bounds.php'));
     }
 
     /**
