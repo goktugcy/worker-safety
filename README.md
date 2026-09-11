@@ -71,7 +71,7 @@ vendor/bin/worker-safety init
 ### What a finding looks like
 
 ```text
-Worker Safety 1.0.0
+Worker Safety 1.0.1
 
 Project
   /Users/dev/payment-api
@@ -559,7 +559,7 @@ progress, no banner:
 ```json
 {
   "version": "1",
-  "tool": { "name": "Worker Safety", "package": "goktugcy/worker-safety", "version": "1.0.0" },
+  "tool": { "name": "Worker Safety", "package": "goktugcy/worker-safety", "version": "1.0.1" },
   "project": {
     "root": "/app",
     "paths": ["app"],

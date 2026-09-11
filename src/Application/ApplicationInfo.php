@@ -16,7 +16,7 @@ final class ApplicationInfo
 
     public const BINARY = 'worker-safety';
 
-    public const VERSION = '1.0.0';
+    public const VERSION = '1.0.1';
 
     public const PACKAGE = 'goktugcy/worker-safety';
 

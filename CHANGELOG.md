@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.1] - 2026-09-11
+
+A compatibility fix for `1.0.0`, which could not be installed alongside Symfony 8.
+
 ### Fixed
 
 - Allow `symfony/console` and `symfony/yaml` 8. `1.0.0` required `^6.4 || ^7.0`,
@@ -374,5 +378,6 @@ Development version. Never tagged or published; its contents ship as part of
 - Documented CI exit codes: `0` pass, `1` findings above threshold,
   `2` invalid configuration, `3` internal error.
 
-[Unreleased]: https://github.com/goktugcy/worker-safety/compare/v1.0.0...HEAD
+[Unreleased]: https://github.com/goktugcy/worker-safety/compare/v1.0.1...HEAD
+[1.0.1]: https://github.com/goktugcy/worker-safety/compare/v1.0.0...v1.0.1
 [1.0.0]: https://github.com/goktugcy/worker-safety/releases/tag/v1.0.0
