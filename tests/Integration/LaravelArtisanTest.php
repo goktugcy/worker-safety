@@ -7,6 +7,7 @@ namespace WorkerSafety\Tests\Integration;
 use Illuminate\Console\Application as Artisan;
 use Illuminate\Contracts\Console\Kernel as KernelContract;
 use Illuminate\Contracts\Debug\ExceptionHandler;
+use Illuminate\Contracts\Events\Dispatcher;
 use Illuminate\Foundation\Application;
 use Illuminate\Foundation\Console\Kernel;
 use Illuminate\Foundation\Exceptions\Handler;
@@ -36,6 +37,10 @@ final class LaravelArtisanTest extends TestCase
 
     protected function setUp(): void
     {
+        // Artisan keeps its starting callbacks in a static, so they have to be
+        // cleared or one test's registration leaks into the next.
+        Artisan::forgetBootstrappers();
+
         $this->basePath = Paths::normalize(sys_get_temp_dir() . '/ws-artisan-' . bin2hex(random_bytes(6)));
 
         @mkdir($this->basePath . '/app/Services', 0o777, true);
@@ -70,6 +75,8 @@ final class LaravelArtisanTest extends TestCase
 
     protected function tearDown(): void
     {
+        Artisan::forgetBootstrappers();
+
         $this->remove($this->basePath);
     }
 
@@ -156,26 +163,81 @@ final class LaravelArtisanTest extends TestCase
     }
 
     /**
-     * The provider only wires the command up for console runs.
+     * Register and boot the provider against an application that reports the
+     * given console state, then ask a real Artisan application what it knows.
+     *
+     * Going through `Illuminate\Console\Application` matters: `commands()`
+     * defers registration to an `Artisan::starting()` callback, so anything
+     * that stops short of building Artisan would pass whether the guard is
+     * there or not.
+     *
+     * @return list<string>
      */
-    public function test_nothing_is_registered_outside_the_console(): void
+    private function commandNamesAfterBoot(bool $runningInConsole): array
     {
-        $app = new Application($this->basePath);
+        Artisan::forgetBootstrappers();
+
+        $app = $runningInConsole
+            ? new Application($this->basePath)
+            : new class ($this->basePath) extends Application {
+                public function runningInConsole(): bool
+                {
+                    return false;
+                }
+            };
+
         $app->singleton(KernelContract::class, Kernel::class);
         $app->singleton(ExceptionHandler::class, Handler::class);
 
-        // Pretend this is an HTTP request.
-        $app->bind('request', static fn (): \Illuminate\Http\Request => new \Illuminate\Http\Request());
-        $registered = [];
-        Artisan::starting(static function (Artisan $artisan) use (&$registered): void {
-            $registered = array_keys($artisan->all());
-        });
-
         $provider = new WorkerSafetyServiceProvider($app);
         $provider->register();
+        $provider->boot();
 
-        self::assertTrue($app->bound(ArtisanScanCommand::class), 'The binding is always available…');
-        self::assertNotContains('worker-safety:scan', $registered, '…but nothing is registered yet.');
+        // `resolve()` registers an #[AsCommand] class lazily into Artisan's
+        // command map, so the container loader has to be attached before
+        // `all()` can see it — this is what the console kernel does too.
+        $artisan = (new Artisan($app, $app->make(Dispatcher::class), 'testing'))
+            ->setContainerCommandLoader();
+
+        return array_keys($artisan->all());
+    }
+
+    public function test_the_command_is_registered_for_a_console_run(): void
+    {
+        self::assertContains('worker-safety:scan', $this->commandNamesAfterBoot(true));
+    }
+
+    /**
+     * Outside the console the provider still registers — a discovered provider
+     * is loaded on every request — but it must not add the command.
+     *
+     * Removing the `runningInConsole()` guard from the provider has to make
+     * this test fail; that is the whole point of it.
+     */
+    public function test_the_command_is_not_registered_outside_the_console(): void
+    {
+        $names = $this->commandNamesAfterBoot(false);
+
+        self::assertNotContains('worker-safety:scan', $names);
+        self::assertNotSame([], $names, 'Artisan itself should still have its built-in commands.');
+    }
+
+    public function test_the_container_binding_exists_either_way(): void
+    {
+        foreach ([true, false] as $console) {
+            $app = $console
+                ? new Application($this->basePath)
+                : new class ($this->basePath) extends Application {
+                    public function runningInConsole(): bool
+                    {
+                        return false;
+                    }
+                };
+
+            (new WorkerSafetyServiceProvider($app))->register();
+
+            self::assertTrue($app->bound(ArtisanScanCommand::class));
+        }
     }
 
     public function test_it_defaults_to_the_application_base_path(): void

@@ -20,9 +20,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   working directory, with `--project-dir` still taking precedence and a relative
   value resolved against the application root.
 
-  The command is registered only for console runs, and Laravel remains a
-  development-only suggestion rather than a dependency — in a project without
-  it, `vendor/bin/worker-safety` is unchanged and nothing under
+  The command is registered only for console runs: outside the console the
+  provider is still loaded and still adds its container binding, but no command
+  is registered and nothing is scanned. Laravel remains a development-only
+  suggestion rather than a dependency — in a project without it,
+  `vendor/bin/worker-safety` is unchanged and nothing under
   `WorkerSafety\Integration\Laravel` is autoloaded.
 
   Verified against Laravel 11 and 12. Laravel 10 is not excluded by the

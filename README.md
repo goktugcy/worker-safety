@@ -271,9 +271,13 @@ php artisan worker-safety:scan
 php artisan worker-safety:scan --project-dir=packages/billing
 ```
 
-The command is only registered for console runs, and the package is a
-`require-dev` dependency, so nothing is loaded during an HTTP request or in a
-production install built with `--no-dev`.
+No scanning happens during an HTTP request, and the Artisan command is not
+registered there either — the provider's `boot()` returns early outside the
+console. Be precise about what that does and does not mean: in an install that
+has dev dependencies, a discovered provider *is* loaded on every request, and
+this one's `register()` adds a single container binding. Nothing else runs. In a
+production install built with `--no-dev` the package is not present at all, so
+there is no provider to discover.
 
 ### Supported Laravel versions
 
