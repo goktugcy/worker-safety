@@ -4,9 +4,9 @@
 
 | Version | Supported |
 | ------- | --------- |
-| 0.1.x   | yes       |
+| 1.0.x   | yes       |
 
-While the project is pre-1.0, security fixes land on the latest minor release.
+Security fixes land on the latest minor release.
 
 ## Reporting a vulnerability
 

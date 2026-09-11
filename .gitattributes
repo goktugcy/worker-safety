@@ -13,8 +13,7 @@ bin/worker-safety text eol=lf
 /.gitignore           export-ignore
 /.github/             export-ignore
 /.php-cs-fixer.dist.php export-ignore
-/CONTRIBUTING.md      export-ignore
-/SECURITY.md          export-ignore
+/composer.lock        export-ignore
 /examples/            export-ignore
 /phpstan.neon         export-ignore
 /phpunit.xml          export-ignore

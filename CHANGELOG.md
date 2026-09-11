@@ -7,6 +7,82 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.0] - 2026-09-11
+
+First stable release, and the first release published at all: `0.1.0` below was
+a development version that was never tagged or distributed.
+
+Worker Safety statically analyzes PHP source for state that survives a request
+when the application runs on a persistent worker — FrankenPHP worker mode,
+Laravel Octane, RoadRunner or Swoole — and reports it before it reaches
+production.
+
+### What is in it
+
+- **Ten rules** (`WS001`–`WS010`) covering static properties, globals,
+  environment mutation, singletons, Laravel container bindings, request-scoped
+  static context, unbounded static collections, listener registration on request
+  paths, and code that assumes the process dies with the request.
+- **Four commands**: `scan`, `rules`, `init` and `baseline`.
+- **Three output formats**: a human-readable console report, a stable JSON
+  schema (`version: "1"`) and SARIF 2.1.0 for GitHub code scanning.
+- **Configuration** through `worker-safety.yaml`, with per-rule enable/severity
+  overrides, path-scoped suppression, inline `// worker-safety-ignore` comments
+  and a `#[WorkerSafetyIgnore]` attribute.
+- **A baseline** so an existing codebase can adopt the tool without fixing
+  everything first.
+- **Framework awareness**: Laravel detection with container-binding analysis,
+  and a Laravel integration that registers `php artisan worker-safety:scan`
+  through package discovery.
+- **Documented CI exit codes**: `0` pass, `1` findings at or above the
+  threshold *or* a file that could not be analyzed, `2` invalid configuration,
+  `3` internal error.
+
+### Requirements
+
+- PHP 8.2, 8.3 or 8.4, with `ext-json` and `ext-mbstring`.
+- `nikic/php-parser` ^5.3, `symfony/console` and `symfony/yaml` ^6.4 or ^7.0.
+- Laravel 11 or 12 for the optional Artisan command. Laravel is never a runtime
+  dependency; without it the CLI behaves identically.
+
+### Upgrading a baseline
+
+**Any baseline generated before this release must be regenerated.** Finding
+identity changed during pre-release review: it is now derived from the whole
+reported construct, taken from the token stream with no length limit, instead of
+a single truncated display line. Old fingerprints will not match, so a stale
+baseline silently stops suppressing anything:
+
+```bash
+vendor/bin/worker-safety baseline
+```
+
+Identity is still independent of line numbers — moving code does not resurrect a
+baselined finding — and is now also insensitive to re-indentation and to comments
+inside the construct, while remaining sensitive to whitespace *inside* string
+literals and heredocs, which is content rather than formatting.
+
+### Known limitations
+
+This is a risk analyzer, not a proof of safety. A clean scan means the known
+cross-request patterns are absent from the analyzed paths. Out of scope:
+
+- Dynamic property and variable access, reflection, and runtime-generated code.
+- Third-party packages: `vendor/` is never scanned, so state retained inside a
+  dependency is invisible.
+- Complex data flow, and inherited or trait-provided members, which are analyzed
+  where they are declared rather than once per using class.
+- `WS008` proves a bound for exactly one shape — a statement that
+  unconditionally resets the whole collection in the function that grows it.
+  Every other release path, including the `if (count($x) > N) array_shift($x)`
+  eviction idiom, is reported at `MEDIUM` with a message saying the bound could
+  not be proven. Review it and record the decision with an inline ignore if the
+  trade-off is deliberate.
+- A namespaced user function that shadows a built-in cannot be told apart from
+  the global one.
+
+The README carries the full list.
+
 ### Added
 
 - **Laravel integration.** Installing the package in a Laravel application now
@@ -244,7 +320,8 @@ Repository:
 
 ## [0.1.0] - 2026-09-10
 
-First release.
+Development version. Never tagged or published; its contents ship as part of
+1.0.0.
 
 ### Added
 
@@ -275,5 +352,5 @@ First release.
 - Documented CI exit codes: `0` pass, `1` findings above threshold,
   `2` invalid configuration, `3` internal error.
 
-[Unreleased]: https://github.com/goktugcy/worker-safety/compare/v0.1.0...HEAD
-[0.1.0]: https://github.com/goktugcy/worker-safety/releases/tag/v0.1.0
+[Unreleased]: https://github.com/goktugcy/worker-safety/compare/v1.0.0...HEAD
+[1.0.0]: https://github.com/goktugcy/worker-safety/releases/tag/v1.0.0

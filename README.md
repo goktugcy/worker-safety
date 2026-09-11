@@ -71,7 +71,7 @@ vendor/bin/worker-safety init
 ### What a finding looks like
 
 ```text
-Worker Safety 0.1.0
+Worker Safety 1.0.0
 
 Project
   /Users/dev/payment-api
@@ -545,10 +545,10 @@ jobs:
           category: worker-safety
 ```
 
-Both are ready to copy from [examples/workflows/](examples/workflows/). They live
-there rather than in this repository's own `.github/workflows/` because they run
-`vendor/bin/worker-safety`, which exists only once the package is installed as a
-dependency.
+Both are reproduced in full above, and the repository keeps copies under
+`examples/workflows/`. They live there rather than in its own
+`.github/workflows/` because they run `vendor/bin/worker-safety`, which exists
+only once the package is installed as a dependency.
 
 ## JSON output
 
@@ -558,7 +558,7 @@ progress, no banner:
 ```json
 {
   "version": "1",
-  "tool": { "name": "Worker Safety", "package": "goktugcy/worker-safety", "version": "0.1.0" },
+  "tool": { "name": "Worker Safety", "package": "goktugcy/worker-safety", "version": "1.0.0" },
   "project": {
     "root": "/app",
     "paths": ["app"],
