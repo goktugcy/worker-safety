@@ -11,6 +11,7 @@ use Symfony\Component\Console\Output\OutputInterface;
 use WorkerSafety\Application\ExitCode;
 use WorkerSafety\Exception\AnalysisException;
 use WorkerSafety\Exception\ConfigurationException;
+use WorkerSafety\Exception\ReplayException;
 use WorkerSafety\Support\Paths;
 
 /**
@@ -31,6 +32,12 @@ abstract class AbstractCommand extends Command
             return ExitCode::InvalidConfiguration->value;
         } catch (AnalysisException $exception) {
             $this->writeError($output, 'Analysis error', $exception->getMessage());
+
+            return ExitCode::InternalError->value;
+        } catch (ReplayException $exception) {
+            // The request never completed, so nothing was observed either way.
+            // That is a transport problem (exit 3), never a failed expectation.
+            $this->writeError($output, 'Replay error', $exception->getMessage());
 
             return ExitCode::InternalError->value;
         } catch (\Throwable $exception) {

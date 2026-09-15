@@ -1,0 +1,20 @@
+version: 1
+name: json type fidelity
+base_url: http://127.0.0.1:1
+
+# Every expectation here holds only if JSON's type model survives both the
+# response decode and the YAML parse.
+steps:
+  - id: shapes
+    request:
+      method: GET
+      path: /shapes
+    expect:
+      status: 200
+      json:
+        obj: { a: 1, b: 2 }                 # key order is not part of the document
+        empty_obj: {}                       # must not match []
+        empty_arr: []                       # must not match {}
+        lit: "__worker_safety_missing__"    # ordinary data, not "absent"
+        n: 1                                # 1 == 1.0, by documented policy
+        present_null: null                  # present and null, not missing

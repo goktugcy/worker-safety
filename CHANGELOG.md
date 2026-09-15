@@ -7,6 +7,114 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.2.0] - 2026-09-15
+
+Runtime replay: the first feature that observes behaviour instead of inferring
+risk from source.
+
+### Fixed
+
+- Reject incomplete chunked replay responses before assertions, including missing
+  terminal chunks and truncated trailers. Validate and decode wire framing
+  instead of relying on the PHP stream decoder.
+- Preserve object/array types in replay request JSON, including nested empty
+  mappings and sequences.
+
+
+### Added
+
+- **`worker-safety test`** — replays an ordered list of HTTP requests against an
+  application that is already running and reports whether a later request could
+  observe state an earlier one left behind.
+
+  Static analysis asks whether code *could* retain state between requests.
+  Replay asks whether request B *did* see what request A wrote. The two answers
+  are not the same, and the package now ships a permanent regression test where
+  they disagree: `RequestContext` in `tests/Fixtures/Replay/static-safe/` is an
+  ordinary object with a mutable instance property, the scanner correctly
+  reports zero findings on it, and replaying two requests against a worker that
+  constructs one instance outside its accept loop observes `"alice"` where
+  `null` was expected. `ReplayStaticGapRegressionTest` starts a real second PHP
+  process and makes real HTTP requests; nothing about it is mocked.
+
+  The control is a second worker fixture differing by one line — where
+  `new RequestContext()` sits relative to the accept loop. The *same unmodified*
+  scenario fails against the leaky one and passes against the fixed one, so the
+  difference is attributable to the object's lifetime and nothing else. The
+  older `/reset` scenario is kept but renamed to say what it actually proves:
+  that an explicit reset between observations passes.
+
+  The fixtures are small persistent PHP processes speaking real HTTP over a
+  loopback socket. They are not FrankenPHP and not Octane, and the suite is not
+  an automated integration with either runtime. Separate local release checks
+  confirmed leak/fix outcomes with standalone FrankenPHP 1.12.7 (PHP 8.5.10)
+  and Laravel 12.69.2 / Octane 2.19.1 using the FrankenPHP backend, one worker
+  per server and stable worker-local identity across requests.
+
+- **Scenario files** (`version: 1`) describing steps, requests and expectations
+  in YAML, validated as strictly as `worker-safety.yaml`: unknown keys are
+  errors at every level, `json` and `body` may not both be set, and the YAML is
+  parsed without object or custom-tag support.
+
+- **Assertions**: status equality, JSON equality at dot-paths (`user`,
+  `tenant.id`, `items.0.id`), case-insensitive header equality, `body_contains`
+  and `body_not_contains`. An absent path is reported as "no value at this path"
+  rather than as `null`, because `{"user": null}` and `{}` are different answers
+  to the question replay asks.
+
+- **Console and JSON reports** for replay. The JSON schema is versioned
+  independently of the scan report. Neither reporter echoes request headers:
+  scenarios carry tokens, and reports end up in CI logs.
+
+- A pure-PHP persistent fixture worker under `tests/Fixtures/Replay/`, so the
+  acceptance test needs no FrankenPHP, no Octane and only loopback networking. CI is unchanged
+  in its requirements.
+
+### Changed
+
+- **Response completeness is verified before any expectation is judged.** Stream
+  metadata is read after the body, not before, so a stall partway through a
+  response is no longer invisible; a read that fails is no longer turned into an
+  empty successful body; and a body shorter than its `Content-Length` is a
+  transport error. Each of these used to report `passed: true` with exit 0 on a
+  response that never arrived — including for `body_not_contains`, which a
+  truncated body satisfies for the wrong reason. HEAD, 1xx, 204, 304 and length-less responses remain supported, each with a regression test.
+- **`--timeout` is documented as an inactivity timeout**, matching what the
+  implementation does. Help text and README agree.
+- **JSON equality uses JSON's type model.** Bodies and YAML expectations both
+  decode with objects and arrays kept distinct, and comparison is recursive:
+  object key order is irrelevant, array order is not, `{}` never equals `[]`,
+  scalar types stay distinct, and the `1 == 1.0` policy applies at every depth.
+  Previously `{a:1,b:2}` failed against `{b:2,a:1}` and `[]` matched `{}`.
+- **Absence is a type, not a string.** The missing-value marker was the literal
+  `__worker_safety_missing__`, so a response containing that string was read as
+  a missing field. It is now an enum case, which no JSON document can produce.
+  The external schema is unchanged: `actual_missing` is still the boolean that
+  distinguishes the two.
+- `StreamHttpClient` reads `fopen()` failures through `error_get_last()` rather
+  than installing a temporary error handler. The self-scan flagged the handler
+  as `WS009`, correctly — mutating the process-wide handler stack from a request
+  path is the thing this package tells people not to do.
+
+### Notes
+
+- **Replay requires a single worker.** It demonstrates cross-request behaviour
+  only when consecutive requests reach the same persistent process. Start the
+  target with `php artisan octane:start --workers=1`, or a single FrankenPHP
+  worker. Against a load-balanced deployment a passing run proves nothing, and
+  the tool does not claim otherwise.
+- `test` never loads, autoloads or executes any of the target application's
+  code. It is an HTTP client, the same way `scan` is a parser.
+- Exit codes match `scan`: `0` pass, `1` a failed expectation, `2` an invalid
+  scenario, `3` a request that could not be completed. `3` is deliberately not
+  `1`, because a request that never happened observed nothing.
+- Out of scope, and not implemented: memory or object-graph inspection, PHP
+  extension instrumentation, automatic application bootstrap, route injection,
+  worker pinning, queue-worker analysis, and mapping observed state back to
+  source.
+- The static analyzer is untouched. Rules, findings, severities, fingerprints
+  and baselines behave exactly as in 1.1.0.
+
 ## [1.1.0] - 2026-09-11
 
 Report wording and false-positive handling, from feedback on real Laravel use.
@@ -439,7 +547,8 @@ Development version. Never tagged or published; its contents ship as part of
 - Documented CI exit codes: `0` pass, `1` findings above threshold,
   `2` invalid configuration, `3` internal error.
 
-[Unreleased]: https://github.com/goktugcy/worker-safety/compare/v1.1.0...HEAD
+[Unreleased]: https://github.com/goktugcy/worker-safety/compare/v1.2.0...HEAD
+[1.2.0]: https://github.com/goktugcy/worker-safety/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/goktugcy/worker-safety/compare/v1.0.1...v1.1.0
 [1.0.1]: https://github.com/goktugcy/worker-safety/compare/v1.0.0...v1.0.1
 [1.0.0]: https://github.com/goktugcy/worker-safety/releases/tag/v1.0.0

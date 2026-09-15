@@ -107,9 +107,71 @@ jobs:
           bin/worker-safety rules
           bin/worker-safety rules WS001
           bin/worker-safety rules --format=json > /dev/null
-          bin/worker-safety scan tests/Fixtures --fail-on=never --no-ansi > /dev/null
-          bin/worker-safety scan tests/Fixtures --fail-on=never --format=json | php -r 'exit(json_decode(stream_get_contents(STDIN)) === null ? 1 : 0);'
-          bin/worker-safety scan tests/Fixtures --fail-on=never --format=sarif | php -r 'exit(json_decode(stream_get_contents(STDIN)) === null ? 1 : 0);'
+          bin/worker-safety scan tests/Fixtures --allow-parse-errors --fail-on=never --no-ansi > /dev/null
+          bin/worker-safety scan tests/Fixtures --allow-parse-errors --fail-on=never --format=json | php -r 'exit(json_decode(stream_get_contents(STDIN)) === null ? 1 : 0);'
+          bin/worker-safety scan tests/Fixtures --allow-parse-errors --fail-on=never --format=sarif | php -r 'exit(json_decode(stream_get_contents(STDIN)) === null ? 1 : 0);'
+          bin/worker-safety test --help
+
+      # The reviewer's question, as a CI gate: the same class passes the static
+      # scan and fails the replay. Uses the pure-PHP fixture worker, so neither
+      # FrankenPHP nor Octane is needed here.
+      - name: Static analysis passes on the replay fixture
+        run: bin/worker-safety scan tests/Fixtures/Replay/static-safe --fail-on=high --no-ansi
+
+      - name: Replay catches the leak the static scan cannot prove
+        run: |
+          php tests/Fixtures/Replay/leaky-worker/server.php 0 60 > /tmp/worker.log 2>&1 &
+          for i in $(seq 1 50); do
+            PORT=$(sed -n 's/^PORT=//p' /tmp/worker.log | head -1)
+            [ -n "$PORT" ] && break
+            sleep 0.2
+          done
+          test -n "$PORT" || { echo 'fixture worker never reported a port'; cat /tmp/worker.log; exit 1; }
+
+          set +e
+          bin/worker-safety test \
+            --scenario=tests/Fixtures/Replay/leaky-worker/scenario.yaml \
+            --base-url="http://127.0.0.1:$PORT" --no-ansi
+          STATUS=$?
+          set -e
+
+          test "$STATUS" -eq 1 || { echo "expected exit 1 from replay, got $STATUS"; exit 1; }
+          echo 'replay reported the cross-request leak and exited 1, as expected'
+
+      # The control: the SAME unmodified scenario against a worker whose only
+      # difference is where `new RequestContext()` sits. Without this, a
+      # permanently failing assertion would look identical to a working one.
+      - name: Replay passes against the fixed worker
+        run: |
+          php tests/Fixtures/Replay/fixed-worker/server.php 0 60 > /tmp/fixed.log 2>&1 &
+          for i in $(seq 1 50); do
+            PORT=$(sed -n 's/^PORT=//p' /tmp/fixed.log | head -1)
+            [ -n "$PORT" ] && break
+            sleep 0.2
+          done
+          test -n "$PORT" || { echo 'fixed worker never reported a port'; cat /tmp/fixed.log; exit 1; }
+
+          bin/worker-safety test \
+            --scenario=tests/Fixtures/Replay/leaky-worker/scenario.yaml \
+            --base-url="http://127.0.0.1:$PORT" --no-ansi
+          echo 'the same scenario passed against the fixed worker, as expected'
+
+      - name: Replay JSON output is pure JSON
+        run: |
+          php tests/Fixtures/Replay/leaky-worker/server.php 0 60 > /tmp/worker2.log 2>&1 &
+          for i in $(seq 1 50); do
+            PORT=$(sed -n 's/^PORT=//p' /tmp/worker2.log | head -1)
+            [ -n "$PORT" ] && break
+            sleep 0.2
+          done
+          test -n "$PORT"
+          set +e
+          bin/worker-safety test tests/Fixtures/Replay/leaky-worker/scenario.yaml \
+            --base-url="http://127.0.0.1:$PORT" --format=json > /tmp/replay.json
+          STATUS=$?
+          set -e
+          test "$STATUS" -eq 1
+          php -r '$r = json_decode(file_get_contents("/tmp/replay.json"), true, 512, JSON_THROW_ON_ERROR); exit($r["passed"] === false ? 0 : 1);'
 
   symfony-8:
     name: Symfony 8 / PHP 8.4
@@ -154,5 +216,5 @@ jobs:
       - name: Smoke-test the binary
         run: |
           bin/worker-safety scan src --fail-on=medium --no-ansi
-          bin/worker-safety scan tests/Fixtures --fail-on=never --format=json | php -r 'exit(json_decode(stream_get_contents(STDIN)) === null ? 1 : 0);'
-          bin/worker-safety scan tests/Fixtures --fail-on=never --format=sarif | php -r 'exit(json_decode(stream_get_contents(STDIN)) === null ? 1 : 0);'
+          bin/worker-safety scan tests/Fixtures --allow-parse-errors --fail-on=never --format=json | php -r 'exit(json_decode(stream_get_contents(STDIN)) === null ? 1 : 0);'
+          bin/worker-safety scan tests/Fixtures --allow-parse-errors --fail-on=never --format=sarif | php -r 'exit(json_decode(stream_get_contents(STDIN)) === null ? 1 : 0);'

@@ -9,6 +9,7 @@ use WorkerSafety\Command\BaselineCommand;
 use WorkerSafety\Command\InitCommand;
 use WorkerSafety\Command\RulesCommand;
 use WorkerSafety\Command\ScanCommand;
+use WorkerSafety\Command\TestCommand;
 
 /**
  * The console application.
@@ -21,6 +22,7 @@ final class WorkerSafetyApplication extends Application
 
         $this->addCommands([
             new ScanCommand(),
+            new TestCommand(),
             new RulesCommand(),
             new InitCommand(),
             new BaselineCommand(),

@@ -1,0 +1,35 @@
+version: 1
+name: shared request context leak
+
+# Overridden by --base-url in the test suite, which starts the fixture server on
+# a free port. Replay only demonstrates anything when every step reaches the
+# SAME persistent process, so this must point at a single-worker instance.
+base_url: http://127.0.0.1:8080
+
+steps:
+  # A request that is entitled to see alice: it is the one that set her.
+  - id: seed
+    request:
+      method: POST
+      path: /context
+      json:
+        action: set
+        user: alice
+    expect:
+      status: 200
+      json:
+        user: alice
+
+  # A separate request that never mentioned a user. On a request-scoped context
+  # this reads null. Anything else means the process carried state across the
+  # request boundary.
+  - id: observe
+    request:
+      method: GET
+      path: /context
+    expect:
+      status: 200
+      json:
+        user: null
+      body_not_contains:
+        - alice

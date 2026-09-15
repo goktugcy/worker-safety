@@ -1,0 +1,38 @@
+version: 1
+name: request context cleared between requests
+base_url: http://127.0.0.1:8080
+
+# A weak control: it adds a /reset request, so it shows the engine reports a
+# pass when the state is cleared — not that the unmodified scenario passes
+# against a corrected application.
+#
+# The strong control is scenario.yaml itself, run unchanged against
+# tests/Fixtures/Replay/fixed-worker/, which differs from the leaky worker only
+# in where `new RequestContext()` sits. See ReplayFixedWorkerControlTest.
+steps:
+  - id: seed
+    request:
+      method: POST
+      path: /context
+      json:
+        user: alice
+    expect:
+      status: 200
+
+  - id: release
+    request:
+      method: POST
+      path: /reset
+    expect:
+      status: 200
+
+  - id: observe
+    request:
+      method: GET
+      path: /context
+    expect:
+      status: 200
+      json:
+        user: null
+      body_not_contains:
+        - alice

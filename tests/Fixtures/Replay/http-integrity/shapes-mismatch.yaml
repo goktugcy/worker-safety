@@ -1,0 +1,17 @@
+version: 1
+name: json type mismatches
+base_url: http://127.0.0.1:1
+
+# The mirror image: each of these must FAIL, and the reported `actual` must come
+# back with the type the response actually sent.
+steps:
+  - id: shapes
+    request:
+      method: GET
+      path: /shapes
+    expect:
+      status: 200
+      json:
+        empty_obj: []      # response sent {} — different type
+        empty_arr: {}      # response sent [] — different type
+        missing_key: null  # absent, which is not null

@@ -71,7 +71,7 @@ vendor/bin/worker-safety init
 ### What a finding looks like
 
 ```text
-Worker Safety 1.1.0
+Worker Safety 1.2.0
 
 Project
   /Users/dev/payment-api
@@ -296,7 +296,360 @@ changes.
 so this finding appears on a stock application the first time you run a scan.
 Handling it once, either way, is part of adopting the tool.
 
+## Runtime replay
+
+Static analysis asks:
+
+> Could this code retain state between requests?
+
+Runtime replay asks:
+
+> Can request B actually observe state left behind by request A?
+
+Those are different questions, and the second one catches things the first
+cannot. `worker-safety test` replays an ordered list of HTTP requests against an
+application that is **already running**, and reports whether a later request saw
+what an earlier one wrote.
+
+### The case that motivates it
+
+This class is in `tests/Fixtures/Replay/static-safe/` and ships with the
+package:
+
+```php
+final class RequestContext
+{
+    private ?string $user = null;
+
+    public function setUser(string $user): void
+    {
+        $this->user = $user;
+    }
+
+    public function user(): ?string
+    {
+        return $this->user;
+    }
+}
+```
+
+There is nothing wrong with it. No static property, no global, no singleton
+holder, no container binding — just a mutable instance property, like most
+objects in most applications. The scanner says so:
+
+```console
+$ worker-safety scan tests/Fixtures/Replay/static-safe --fail-on=high
+No worker-safety risks found.
+Result: PASSED                                                   # exit 0
+```
+
+That is the **correct** answer. Whether this class leaks depends on who
+constructs it and how long they keep it, and neither fact is in the file.
+
+Now use it from a worker loop — one object, reused for every request:
+
+```php
+$context = new RequestContext();          // once, outside the loop
+
+while ($request = receiveRequest()) {
+    handle($request, $context);           // every request shares it
+}
+```
+
+Replay two requests against it. The first sets a user; the second asks for one
+and never mentions a name:
+
+```console
+$ worker-safety test --scenario=tests/Fixtures/Replay/leaky-worker/scenario.yaml
+Step 2  observe
+  ✓ GET /context
+  ✓ status = 200
+  ✗ json.user
+
+    Expected:
+      null
+    Observed:
+      "alice"
+
+Result: FAILED                                                   # exit 1
+```
+
+Request B observed `"alice"`, which only request A ever sent.
+
+The package ships two worker fixtures differing by **one line** — where
+`new RequestContext()` sits relative to the accept loop — and runs the same
+unmodified scenario against both:
+
+| | Result |
+| --- | --- |
+| Static scan of `RequestContext` | **PASS** — 0 findings |
+| Replay against the leaky worker | **FAIL** — request B observed `"alice"` |
+| Replay against the fixed worker | **PASS** — request B observed `null` |
+
+The third row is what makes the second meaningful. Nothing about the scenario
+changes between the two replay runs, so the difference is attributable to the
+object's lifetime and nothing else; without it, a permanently red assertion
+would be indistinguishable from a broken replay engine.
+
+Both are permanent regression tests — `ReplayStaticGapRegressionTest` and
+`ReplayFixedWorkerControlTest` — which start real processes and make real HTTP
+requests. The tests also assert, via the fixture's own `X-Worker-Pid` header,
+that both requests were served by one process.
+
+The fixture is a small persistent PHP process speaking HTTP over a loopback
+socket. It is **not** FrankenPHP or Octane. Separately, release checks on
+2026-09-15 reproduced the same leaking/fixed results on FrankenPHP 1.12.7
+(PHP 8.5.10), both standalone and through Laravel 12.69.2 / Octane 2.19.1.
+Each server used one worker, with a worker-local identity checked across requests.
+These were local integration checks, not part of the automated fixture suite.
+
+### Run it against a single worker, or the result means nothing
+
+Replay demonstrates cross-request behaviour only when consecutive requests reach
+**the same persistent process**. Against a load-balanced deployment the requests
+may land on different workers, and a passing run would prove nothing.
+
+This is not a performance setting. With two workers, request B may be served by
+a process that never handled request A, so a leak that exists will often still
+report as clean. Treat replay as a test-environment tool.
+
+**Laravel Octane:**
+
+```bash
+php artisan octane:start --workers=1
+```
+
+**FrankenPHP.** `frankenphp run` on its own does *not* give you one worker — the
+worker thread count defaults to twice the number of CPUs. The count is part of
+the worker configuration, so set it explicitly:
+
+```caddyfile
+# Caddyfile
+{
+    frankenphp {
+        worker {
+            file ./public/index.php
+            num 1          # one PHP thread for this worker; the default is 2x CPUs
+        }
+    }
+}
+```
+
+The short form and the environment variable take the count as the second value:
+
+```bash
+# in a Caddyfile frankenphp block
+worker ./public/index.php 1
+
+# or, with the Docker image
+docker run -e FRANKENPHP_CONFIG="worker ./public/index.php 1" ...
+```
+
+`num` is what provides the guarantee; the command you use to start the server
+does not. These forms are taken from the FrankenPHP worker and configuration
+documentation. The explicit `num 1` setup was also exercised during the
+local 1.2.0 release checks described above. The automated regression suite
+continues to use its portable PHP fixture; other runtime versions and Octane
+backends are not covered by that local check.
+
+Worker Safety does not claim, and cannot claim, that a passing replay against a
+production deployment proves the absence of retained state.
+
+### Scenario syntax
+
+```yaml
+version: 1
+name: shared request context leak
+base_url: http://127.0.0.1:8080
+
+steps:
+  - id: seed
+    request:
+      method: POST                  # GET | POST | PUT | PATCH | DELETE
+      path: /__worker-safety/context
+      headers:
+        Authorization: Bearer test-token
+      json:                         # sends application/json
+        action: set
+        user: alice
+    expect:
+      status: 200
+
+  - id: observe
+    request:
+      method: GET
+      path: /__worker-safety/context
+    expect:
+      status: 200
+      json:
+        user: null
+```
+
+- `version` must be `1`; anything else is rejected rather than guessed at.
+- `base_url` may be omitted when `--base-url` is passed.
+- `id` is optional and defaults to `step-1`, `step-2`, …; ids must be unique.
+- A request sets either `json` **or** `body`, never both.
+- Unknown keys are errors at every level, so a typo fails the run instead of
+  silently doing nothing.
+
+Scenarios are read as data. The YAML is parsed without object or custom-tag
+support, exactly like `worker-safety.yaml`.
+
+### Assertions
+
+| Key | Meaning |
+| --- | --- |
+| `status: 200` | HTTP status equality. |
+| `json: {user: null}` | Value at a dot-path equals the given value. |
+| `headers: {X-Tenant: foo}` | Header equality, case-insensitive. |
+| `body_contains: [success]` | Raw body contains every string. |
+| `body_not_contains: [alice]` | Raw body contains none of them. |
+
+`json` paths are simple dot-paths, not JSONPath: `user`, `tenant.id`,
+`items.0.id`. A numeric segment indexes a list.
+
+Comparison uses JSON's type model, not PHP's:
+
+- **Object key order is irrelevant** — `{"a":1,"b":2}` equals `{"b":2,"a":1}`.
+- **Array order matters** — `[1,2]` is not `[2,1]`.
+- **An object is never an array** — `{}` and `[]` stay distinct, on the response
+  side *and* the YAML side.
+- **Types are preserved** — `1`, `"1"` and `true` are three different values.
+- **`1` equals `1.0`**, applied at every depth.
+- **Missing is not null.** A path that is **absent** is reported as "no value at
+  this path", never as `null` — the distinction the leak case depends on, since
+  `{"user": null}` and `{}` are different answers. Absence is represented by a
+  value JSON cannot produce, so a response containing any particular string is
+  never mistaken for a missing field.
+
+### `test`
+
+```bash
+worker-safety test --scenario=worker-safety.replay.yaml
+worker-safety test worker-safety.replay.yaml --format=json
+```
+
+| Option | Meaning |
+| --- | --- |
+| `--scenario`, `-s` | Scenario file. Also accepted as a positional argument. |
+| `--base-url`, `-b` | Override the scenario's `base_url`. |
+| `--format`, `-f` | `console` (default) or `json`. |
+| `--timeout`, `-t` | Per-request **inactivity** timeout in seconds (default 10). |
+| `--quiet`, `-q` | Suppress output; the exit code still reports the result. |
+
+### Exit codes
+
+| Code | Meaning |
+| --- | --- |
+| `0` | Every expectation held. |
+| `1` | At least one expectation did not hold. |
+| `2` | The scenario or an option was invalid. |
+| `3` | A request could not be completed — connection refused, timeout, incomplete or malformed response. |
+
+`3` is deliberately distinct from `1`: a request that never completed observed
+nothing either way, so it is not evidence about state. A response whose body
+stops short of its `Content-Length`, has incomplete chunk framing, or stalls
+mid-body is a transport
+error for exactly this reason — `body_not_contains: [alice]` cannot be satisfied
+by a body that was cut off before `alice` could appear.
+
+Chunked responses must include complete chunks, the zero-size final chunk and
+the terminating trailer line. Chunk extensions and trailers are accepted; only
+decoded body bytes reach assertions. Unsupported transfer encodings are rejected.
+Responses delimited only by connection closure cannot establish whether an
+application intended to send more data.
+
+Request `json` values preserve YAML mappings as JSON objects and sequences as
+arrays, including nested empty `{}` and `[]` values.
+
+On a transport error nothing is written to stdout, including under
+`--format=json`, so a failed run can never be mistaken for a successful report.
+
+`--timeout` is an **inactivity** timeout, not a total deadline: it fires when no
+data arrives for that long. A response that keeps trickling bytes resets the
+window and is not cut off.
+
+### JSON output
+
+```json
+{
+  "version": 1,
+  "scenario": {
+    "name": "shared request context leak",
+    "target": "http://127.0.0.1:8080"
+  },
+  "passed": false,
+  "steps": [
+    {
+      "id": "observe",
+      "request": "GET /context",
+      "status": 200,
+      "passed": false,
+      "duration_seconds": 0.0012,
+      "assertions": [
+        {
+          "type": "json_equals",
+          "path": "user",
+          "expected": null,
+          "actual": "alice",
+          "actual_missing": false,
+          "passed": false,
+          "detail": null
+        }
+      ]
+    }
+  ]
+}
+```
+
+`version` is the replay schema version, independent of both the tool version and
+the scan report's schema. `actual_missing` distinguishes an absent path from an
+observed `null`; when it is `true`, `actual` is `null` only because JSON has no
+other way to say "nothing was there".
+
+### Laravel
+
+Expose a test-only endpoint that reads and writes whatever request-scoped state
+you want to check, then:
+
+```bash
+php artisan octane:start --workers=1
+worker-safety test --scenario=worker-safety.replay.yaml
+```
+
+Worker Safety does **not** generate routes for you: what counts as request state
+is yours to decide, and injecting endpoints into an application would break the
+rule that this tool never modifies or executes your code.
+
+Protect any such endpoint so it cannot be reached in production — register it
+only in a non-production environment, behind middleware, or in a route file that
+production never loads. An endpoint that reports internal state is not something
+to ship.
+
+### What replay does not do
+
+- **It never loads your application.** No bootstrap, no autoload, no container,
+  no instantiation of your classes. `worker-safety test` is an HTTP client, the
+  same way `scan` is a parser — neither one runs your code.
+- **It proves nothing about paths you did not replay.** A pass covers the
+  requests in the scenario against that instance, and nothing else.
+- **It does not inspect memory, objects or the heap.** What it sees is what the
+  application chose to put in a response.
+- **It does not correlate workers.** There is no worker pinning and no
+  distributed tracing; that is why the single-worker requirement exists.
+- **It does not analyze queue workers.** Replay drives HTTP requests only.
+
+### Secrets
+
+Scenarios can carry tokens and cookies. Neither reporter echoes request headers,
+in console or JSON output, and nothing from a scenario is written to a baseline.
+Worker Safety sends no telemetry.
+
 ## CLI reference
+
+`scan`, `rules`, `init` and `baseline` analyze source code. `test` is the
+runtime counterpart and is documented under
+[Runtime replay](#runtime-replay).
 
 ### `scan`
 
@@ -428,6 +781,10 @@ README, and nothing under `WorkerSafety\Integration\Laravel` is ever autoloaded.
 | `1` | Findings reached the `--fail-on` threshold, **or** a file could not be analyzed. |
 | `2` | Invalid configuration or CLI option. Nothing was analyzed. |
 | `3` | Internal error, including a path that does not exist. |
+
+`test` uses the same four codes with the same meanings, reading "expectation"
+for "finding": `1` is a failed expectation, and `3` covers a request that could
+not be completed at all. See [Runtime replay](#exit-codes-1).
 
 `--fail-on=never` reports findings but always exits `0`.
 
@@ -655,7 +1012,7 @@ progress, no banner:
 ```json
 {
   "version": "1",
-  "tool": { "name": "Worker Safety", "package": "goktugcy/worker-safety", "version": "1.1.0" },
+  "tool": { "name": "Worker Safety", "package": "goktugcy/worker-safety", "version": "1.2.0" },
   "project": {
     "root": "/app",
     "paths": ["app"],
@@ -869,10 +1226,6 @@ rollout, watch memory, and recycle workers.
 
 ## Roadmap
 
-- `worker-safety test` — drive a real FrankenPHP/Octane worker, replay requests
-  and diff observed state between them. The `Finding` model and every reporter
-  are already independent of the AST so that a runtime analyzer can emit into
-  them unchanged; `Analyzer` is the interface it will implement.
 - Symfony-specific rules for container and kernel state.
 - Inherited and trait-provided static property analysis.
 - Parallel file analysis.

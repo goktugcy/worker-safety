@@ -1,0 +1,15 @@
+version: 1
+name: absent json path
+base_url: http://127.0.0.1:8080
+
+# `tenant.id` is never sent by the fixture. The report has to say "no value at
+# this path" rather than "null", because those are different answers.
+steps:
+  - id: observe
+    request:
+      method: GET
+      path: /context
+    expect:
+      status: 200
+      json:
+        tenant.id: 42

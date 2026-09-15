@@ -1,0 +1,27 @@
+version: 1
+name: scenario carrying a credential
+base_url: http://127.0.0.1:8080
+
+# Exists to pin that neither reporter echoes request headers: a scenario is a
+# plausible place for a real token, and reports end up in CI logs.
+steps:
+  - id: seed
+    request:
+      method: POST
+      path: /context
+      headers:
+        Authorization: Bearer s3cret-token
+      json:
+        user: alice
+    expect:
+      status: 200
+  - id: observe
+    request:
+      method: GET
+      path: /context
+      headers:
+        Authorization: Bearer s3cret-token
+    expect:
+      status: 200
+      json:
+        user: null
